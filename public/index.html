@@ -218,6 +218,9 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
 .fu-gap-toggle.open svg{transform:rotate(180deg)}
 .fu-gap-body{display:none}.fu-gap-body.open{display:block}
 
+/* Screen navigator */
+.fu-screen-item>div.selected{background:var(--teal-l)!important}
+
 /* Insight panel */
 .fu-insight-row{font-size:11px;color:var(--text2);line-height:1.65;padding:10px 14px;background:var(--bg);border-radius:var(--radius-sm);border-left:2px solid var(--teal);margin-bottom:8px}
 .fu-insight-row:last-child{margin-bottom:0}
@@ -627,8 +630,6 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
       <button class="btn" onclick="fuLoad(true)">↻ Refresh</button>
     </div>
   </div>
-
-  <!-- Date range sub-bar -->
   <div class="fu-range-bar">
     <span style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3)">Period</span>
     <button class="fu-range-chip on" data-start="7daysAgo" data-end="today" onclick="fuSetRange(this)">7 days</button>
@@ -636,125 +637,71 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
     <button class="fu-range-chip" data-start="90daysAgo" data-end="today" onclick="fuSetRange(this)">90 days</button>
     <span style="margin-left:auto;font-size:10px;color:var(--text3)" id="fu-last-updated"></span>
   </div>
-
   <div class="scroll">
-
-    <!-- KPI row -->
     <div class="kpi-row kpi-r4" id="fu-kpis"></div>
-
-    <!-- Booking funnel — full width hero -->
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-head">
-        <div><div class="card-title">Guest booking funnel</div><div class="card-sub">Every step from viewing to completing — where guests drop off</div></div>
-        <span style="font-size:10px;color:var(--text3)" id="fu-funnel-note"></span>
+    <!-- Screen navigator -->
+    <div style="display:grid;grid-template-columns:200px 1fr;gap:16px;margin-bottom:16px">
+      <div class="card" style="padding:0;overflow:hidden;align-self:start">
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border);font-size:11px;font-weight:500">App screens</div>
+        <div id="fu-screen-list"><div class="fu-loading" style="padding:16px 14px"><div class="fu-spinner"></div>Loading...</div></div>
       </div>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+          <div><div class="card-title" id="fu-screen-title">Select a screen</div><div class="card-sub" id="fu-screen-sub">Click any screen on the left</div></div>
+          <span id="fu-screen-badge" style="font-size:10px;color:var(--text3)"></span>
+        </div>
+        <div style="padding:16px;min-height:300px" id="fu-screen-detail">
+          <div style="font-size:11px;color:var(--text3);padding:60px 0;text-align:center">Select a screen to see what guests tapped</div>
+        </div>
+      </div>
+    </div>
+    <!-- Booking funnel -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-head"><div><div class="card-title">Booking funnel</div><div class="card-sub">Start → Complete · <span style="color:var(--amber)">dept breakdown pending source_module fix</span></div></div></div>
       <div id="fu-funnel-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading from GA4...</div></div>
     </div>
-
     <!-- AI Insights -->
     <div class="card" style="margin-bottom:16px">
-      <div class="card-head">
-        <div><div class="ai-pip" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--teal);animation:pulse 2s infinite;margin-right:8px"></div><span class="card-title">AI insights · feature data</span></div>
-        <button class="btn" style="font-size:10px" onclick="fuGenerateInsights()">↻ Regenerate</button>
-      </div>
-      <div id="fu-insights-body" style="padding:4px 0"><div class="fu-loading"><div class="fu-spinner"></div>Analysing GA4 data...</div></div>
+      <div class="card-head"><div><span class="ai-pip" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--teal);animation:pulse 2s infinite;margin-right:8px"></span><span class="card-title">AI insights</span></div></div>
+      <div id="fu-insights-body" style="padding:4px 0"><div class="fu-loading"><div class="fu-spinner"></div>Analysing...</div></div>
     </div>
-
-    <!-- Dept tabs -->
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-head" style="margin-bottom:0;padding-bottom:0">
-        <div class="card-title">Feature interactions by screen</div>
-      </div>
-      <div class="fu-tabs" style="margin-top:12px">
-        <button class="fu-tab on" onclick="fuTab('home',this)">Home screen</button>
-        <button class="fu-tab" onclick="fuTab('ird',this)">IRD menu</button>
-        <button class="fu-tab" onclick="fuTab('cart',this)">Cart</button>
-        <button class="fu-tab" onclick="fuTab('spotlight',this)">Spotlight</button>
-      </div>
-      <div class="fu-tab-panel on" id="fu-tab-home">
-        <div class="fu-grid" style="margin-bottom:0">
-          <div>
-            <div class="sec-lbl">Quick action taps · which prompts guests use</div>
-            <div id="fu-qa-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
-          </div>
-          <div>
-            <div class="sec-lbl">Bottom navigation taps</div>
-            <div id="fu-nav-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
-          </div>
-        </div>
-      </div>
-      <div class="fu-tab-panel" id="fu-tab-ird">
-        <div class="fu-grid" style="margin-bottom:0">
-          <div>
-            <div class="sec-lbl">Menu interactions · tabs, categories, items</div>
-            <div id="fu-ird-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
-          </div>
-          <div>
-            <div class="sec-lbl">Top viewed items</div>
-            <div id="fu-items-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
-          </div>
-        </div>
-      </div>
-      <div class="fu-tab-panel" id="fu-tab-cart">
-        <div class="fu-grid" style="margin-bottom:0">
-          <div>
-            <div class="sec-lbl">Cart actions</div>
-            <div id="fu-cart-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
-          </div>
-          <div>
-            <div class="sec-lbl">Quantity changes · item-level</div>
-            <div id="fu-qty-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
-          </div>
-        </div>
-      </div>
-      <div class="fu-tab-panel" id="fu-tab-spotlight">
-        <div class="sec-lbl">Spotlight card taps · home carousel</div>
-        <div id="fu-spotlight-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
-      </div>
-    </div>
-
-    <!-- Recommendation carousel -->
+    <!-- Recommendations -->
     <div class="card" style="margin-bottom:16px">
       <div class="card-head">
-        <div><div class="card-title">Recommendation carousel</div><div class="card-sub">"Add some more delicacies" · IRD cart screen</div></div>
-        <span class="fu-status fu-warn">⚠ Partial data</span>
+        <div><div class="card-title">Recommendation carousel · "Add some more delicacies"</div><div class="card-sub">IRD cart · add_suggested_item taps</div></div>
+        <span class="fu-status fu-warn">⚠ Impression missing</span>
       </div>
-      <div class="fu-rec-callout">
-        <strong>Impression tracking missing</strong> — we can see which items guests tap, but not how many guests saw the carousel. Tap rate (taps ÷ impressions) is the key metric for carousel effectiveness. Engineering has been asked to add <code>recommendation_impression</code> and <code>recommendation_added_to_cart</code> events.
-      </div>
-      <div class="sec-lbl">Top tapped recommendations · add_suggested_item</div>
-      <div id="fu-rec-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading from GA4...</div></div>
+      <div class="fu-rec-callout"><strong>Can't calculate tap rate</strong> — impression tracking not implemented. <code>recommendation_impression</code> is the priority fix.</div>
+      <div id="fu-rec-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
     </div>
-
-    <!-- Instrumentation gap tracker — collapsible -->
+    <!-- Gap tracker -->
     <div class="card last">
       <div class="fu-gap-toggle" id="fu-gap-toggle" onclick="fuToggleGap()">
-        <div><div class="card-title">Instrumentation gap tracker</div><div class="card-sub" style="margin-top:3px">Events pending from engineering · click to expand</div></div>
+        <div><div class="card-title">Instrumentation gap tracker</div><div class="card-sub" style="margin-top:3px">Click to expand</div></div>
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
       </div>
       <div class="fu-gap-body" id="fu-gap-body">
         <div style="margin-top:14px"><div class="tbl-wrap"><table class="tbl">
           <thead><tr><th>Event</th><th>Screen</th><th>Status</th><th>What's missing</th><th>Priority</th></tr></thead>
           <tbody>
+            <tr><td>source_module on booking events</td><td>All</td><td><span class="pill pr">❌ Missing</span></td><td>Dept not passed — funnel can't break by dept</td><td><span class="pill pr">High</span></td></tr>
             <tr><td>recommendation_impression</td><td>Cart</td><td><span class="pill pr">❌ Priority</span></td><td>No impression tracking on rec carousel</td><td><span class="pill pr">High</span></td></tr>
             <tr><td>recommendation_added_to_cart</td><td>Cart</td><td><span class="pill pr">❌ Priority</span></td><td>Tap tracked, add-to-cart not distinct</td><td><span class="pill pr">High</span></td></tr>
-            <tr><td>source_module on booking events</td><td>All</td><td><span class="pill pr">❌ Missing</span></td><td>Dept not passed — funnel can't break down by dept</td><td><span class="pill pr">High</span></td></tr>
-            <tr><td>cart_view</td><td>Cart</td><td><span class="pill pa">🟡 Partial</span></td><td>Sets abandon step only — no GA event with item_count/cart_total</td><td><span class="pill pa">Medium</span></td></tr>
+            <tr><td>chat interactions</td><td>/chat</td><td><span class="pill pr">❌ Missing</span></td><td>8,838 screen views but zero click tracking inside chat</td><td><span class="pill pr">High</span></td></tr>
+            <tr><td>cart_view</td><td>Cart</td><td><span class="pill pa">🟡 Partial</span></td><td>No GA event with item_count/cart_total</td><td><span class="pill pa">Medium</span></td></tr>
             <tr><td>cart_request_tap → cart_total</td><td>Cart</td><td><span class="pill pa">🟡 Partial</span></td><td>Tap fires, cart_total/item_count missing</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>order_complete → order_id</td><td>Confirmation</td><td><span class="pill pa">🟡 Partial</span></td><td>Fires on cart not confirmation, order_id missing</td><td><span class="pill pa">Medium</span></td></tr>
+            <tr><td>order_complete → order_id</td><td>Confirmation</td><td><span class="pill pa">🟡 Partial</span></td><td>Fires on cart not confirmation</td><td><span class="pill pa">Medium</span></td></tr>
+            <tr><td>activity mood picker</td><td>/activity</td><td><span class="pill pr">❌ Missing</span></td><td">"Genie, Find my Perfect Experience" swipe — no events</td><td><span class="pill pa">Medium</span></td></tr>
+            <tr><td>housekeeping chip taps</td><td>Home</td><td><span class="pill pr">❌ Missing</span></td><td>Quick action chips open chat — no dedicated HK event</td><td><span class="pill pa">Medium</span></td></tr>
+            <tr><td>spa mood filter / treatment select</td><td>/spa</td><td><span class="pill pr">❌ Missing</span></td><td>SPA closed Jun 1 — instrument before Oct 15 reopening</td><td><span class="pill pa">Medium</span></td></tr>
             <tr><td>spotlight_tap → card_position</td><td>Home</td><td><span class="pill pa">🟡 Partial</span></td><td>Tap fires, position index missing</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>item_view → item_id, price</td><td>IRD Menu</td><td><span class="pill pa">🟡 Partial</span></td><td>item_name ✓ · item_id + price missing</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>home_view</td><td>Home</td><td><span class="pill pr">❌ Missing</span></td><td>No screen-view event on home load</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>item_add_to_cart → price, qty</td><td>IRD Menu</td><td><span class="pill pa">🟡 Partial</span></td><td>item_name ✓ · price + qty missing</td><td><span class="pill pg">Low</span></td></tr>
-            <tr><td>item_remove_from_cart</td><td>IRD Menu</td><td><span class="pill pr">❌ Missing</span></td><td>Minus stepper — no event fires</td><td><span class="pill pg">Low</span></td></tr>
+            <tr><td>item_view → item_id, price</td><td>IRD</td><td><span class="pill pa">🟡 Partial</span></td><td>item_name ✓ · item_id + price missing</td><td><span class="pill pa">Medium</span></td></tr>
+            <tr><td>item_add_to_cart → price, qty</td><td>IRD</td><td><span class="pill pa">🟡 Partial</span></td><td>item_name ✓ · price + qty missing</td><td><span class="pill pg">Low</span></td></tr>
             <tr><td>special_request_tap</td><td>Cart</td><td><span class="pill pr">❌ Missing</span></td><td>Special Requests button — no event</td><td><span class="pill pg">Low</span></td></tr>
-            <tr><td>delivery_location_tap</td><td>Cart</td><td><span class="pill pr">❌ Missing</span></td><td>Delivery location dropdown — no event</td><td><span class="pill pg">Low</span></td></tr>
-            <tr><td>chat_with_us_tap</td><td>Confirmation</td><td><span class="pill pr">❌ Missing</span></td><td>Chat button — haptic only, no GA event</td><td><span class="pill pg">Low</span></td></tr>
           </tbody>
         </table></div></div>
       </div>
     </div>
-
   </div>
 </div>
 
@@ -3938,7 +3885,6 @@ function renderGAWeekly(){
     plugins:{legend:{position:'bottom',labels:{font:{size:9},boxWidth:8,padding:8}},datalabels:{}},
     scales:{x:{ticks:{font:{size:9}},grid:{display:false}},y:{ticks:{font:{size:9}},grid:{color:'rgba(128,128,128,0.1)'}},layout:{padding:{top:14}}}}});
 }
-
 /* ══════════════════════════════════════════════════════════
    FEATURE USAGE — GA4 Data API via Netlify Function
 ══════════════════════════════════════════════════════════ */
@@ -3948,22 +3894,33 @@ let fuEndDate = 'today';
 let fuCache = {};
 let fuLoaded = false;
 let fuAllData = {};
+let fuClickData = []; // all click_events cached
+let fuScreenData = []; // all screen_view data
+
+// Screen metadata — maps GA4 screen path to friendly name + dept
+const SCREEN_META = {
+  '/home':                  { name: 'Home',               icon: '🏠', dept: 'home' },
+  '/fullmenu':              { name: 'IRD Full Menu',       icon: '🍽️', dept: 'dining' },
+  '/cart':                  { name: 'IRD Cart',            icon: '🛒', dept: 'dining' },
+  '/activity':              { name: 'Activity Picker',     icon: '🎯', dept: 'activity' },
+  '/activity/categories':   { name: 'Activity List',       icon: '📋', dept: 'activity' },
+  '/activity/booking':      { name: 'Activity Booking',    icon: '📅', dept: 'activity' },
+  '/restaurant':            { name: 'Restaurant',          icon: '🍴', dept: 'restaurant' },
+  '/restaurant/booking':    { name: 'Restaurant Booking',  icon: '📅', dept: 'restaurant' },
+  '/chat':                  { name: 'Genie AI Chat',       icon: '💬', dept: 'chat' },
+  '/requests':              { name: 'My Requests',         icon: '📝', dept: 'other' },
+  '/confirmation':          { name: 'Confirmation',        icon: '✅', dept: 'other' },
+  '/':                      { name: 'Splash / Root',       icon: '⚡', dept: 'other' },
+  '/LoadingScreen':         { name: 'Loading Screen',      icon: '⏳', dept: 'other' },
+};
 
 function fuSetRange(el) {
   document.querySelectorAll('.fu-range-chip').forEach(c => c.classList.remove('on'));
   el.classList.add('on');
   fuStartDate = el.dataset.start;
   fuEndDate = el.dataset.end;
-  fuCache = {};
-  fuLoaded = false;
+  fuCache = {}; fuLoaded = false;
   fuLoad(true);
-}
-
-function fuTab(name, el) {
-  document.querySelectorAll('.fu-tab').forEach(t => t.classList.remove('on'));
-  document.querySelectorAll('.fu-tab-panel').forEach(p => p.classList.remove('on'));
-  el.classList.add('on');
-  document.getElementById('fu-tab-' + name).classList.add('on');
 }
 
 function fuToggleGap() {
@@ -3989,8 +3946,12 @@ function fuRows(data) {
   if (!data?.rows) return [];
   const dims = data.dimensionHeaders?.map(h => h.name) || [];
   return data.rows.map(r => {
-    const obj = { count: parseInt(r.metricValues?.[0]?.value || 0) };
+    const obj = {};
     dims.forEach((d, i) => { obj[d] = r.dimensionValues?.[i]?.value || ''; });
+    r.metricValues?.forEach((m, i) => {
+      const name = data.metricHeaders?.[i]?.name || `metric${i}`;
+      obj[name] = parseInt(m.value || 0);
+    });
     return obj;
   });
 }
@@ -4000,7 +3961,7 @@ function fuLoadingEl(id) {
   if (el) el.innerHTML = '<div class="fu-loading"><div class="fu-spinner"></div>Loading from GA4...</div>';
 }
 
-function fuError(id, msg) {
+function fuErrorEl(id, msg) {
   const el = document.getElementById(id);
   if (el) el.innerHTML = `<div style="font-size:11px;color:var(--red);padding:12px 0">⚠ ${msg}</div>`;
 }
@@ -4016,30 +3977,26 @@ async function fuLoad(force = false) {
   const statusEl = document.getElementById('fu-api-status');
   const subEl = document.getElementById('fu-sub');
   if (statusEl) { statusEl.className = 'fu-status fu-warn'; statusEl.textContent = '⟳ Loading...'; }
-
-  ['fu-funnel-body','fu-spotlight-body','fu-ird-body','fu-qa-body','fu-cart-body','fu-rec-body',
-   'fu-nav-body','fu-items-body','fu-qty-body','fu-insights-body'].forEach(fuLoadingEl);
+  ['fu-funnel-body','fu-rec-body','fu-insights-body'].forEach(fuLoadingEl);
+  document.getElementById('fu-screen-list').innerHTML = '<div class="fu-loading" style="padding:16px 14px"><div class="fu-spinner"></div>Loading...</div>';
 
   try {
-    const [funnel, spotlight, ird, cart, recs, home] = await Promise.all([
+    const [screens, funnel, clicks, recs] = await Promise.all([
+      fuFetch('screen_views'),
       fuFetch('booking_funnel'),
-      fuFetch('spotlight'),
-      fuFetch('ird_menu'),
-      fuFetch('cart'),
+      fuFetch('click_events'),
       fuFetch('recommendations'),
-      fuFetch('home'),
     ]);
 
-    fuAllData = { funnel, spotlight, ird, cart, recs, home };
+    fuScreenData = fuRows(screens);
+    fuClickData = fuRows(clicks);
+    fuAllData = { screens, funnel, clicks, recs };
 
     fuRenderKPIs(funnel, recs);
+    fuRenderScreenList(fuScreenData);
     fuRenderFunnel(funnel);
-    fuRenderHome(home);
-    fuRenderIRD(ird);
-    fuRenderCart(cart);
-    fuRenderSpotlight(spotlight);
     fuRenderRecs(recs);
-    fuRenderInsights(funnel, recs, ird, cart, home);
+    fuRenderInsights(funnel, recs, fuScreenData);
 
     const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     const lastEl = document.getElementById('fu-last-updated');
@@ -4047,191 +4004,211 @@ async function fuLoad(force = false) {
     if (subEl) subEl.textContent = `Live from GA4 · orascom-ohm1 · ${fuStartDate} → ${fuEndDate}`;
     if (statusEl) { statusEl.className = 'fu-status fu-ok'; statusEl.textContent = '● Live'; }
 
+    // Auto-select home screen
+    const homeRow = fuScreenData.find(r => r.unifiedScreenName === '/home');
+    if (homeRow) fuSelectScreen('/home', homeRow.screenPageViews || 0, homeRow.userEngagementDuration || 0);
+
   } catch(e) {
     console.error('Feature usage load error:', e);
     if (statusEl) { statusEl.className = 'fu-status fu-err'; statusEl.textContent = '⚠ API error'; }
-    ['fu-funnel-body','fu-spotlight-body','fu-ird-body','fu-qa-body','fu-cart-body','fu-rec-body',
-     'fu-nav-body','fu-items-body','fu-qty-body'].forEach(id => fuError(id, e.message));
-    document.getElementById('fu-insights-body').innerHTML = `<div style="font-size:11px;color:var(--red);padding:8px 0">⚠ Could not load data: ${e.message}</div>`;
+    ['fu-funnel-body','fu-rec-body','fu-insights-body'].forEach(id => fuErrorEl(id, e.message));
+    document.getElementById('fu-screen-list').innerHTML = `<div style="font-size:11px;color:var(--red);padding:16px 14px">⚠ ${e.message}</div>`;
   }
 }
 
 function fuRenderKPIs(funnelData, recsData) {
   const rows = fuRows(funnelData);
-  const starts = rows.filter(r => r.eventName === 'booking_start').reduce((a, r) => a + r.count, 0);
-  const completes = rows.filter(r => r.eventName === 'booking_complete').reduce((a, r) => a + r.count, 0);
-  const abandoned = rows.filter(r => r.eventName === 'booking_abandoned').reduce((a, r) => a + r.count, 0);
-  const recTaps = fuRows(recsData).reduce((a, r) => a + r.count, 0);
+  const starts = rows.filter(r => r.eventName === 'booking_start').reduce((a, r) => a + r.eventCount, 0);
+  const completes = rows.filter(r => r.eventName === 'booking_complete').reduce((a, r) => a + r.eventCount, 0);
+  const abandoned = rows.filter(r => r.eventName === 'booking_abandoned').reduce((a, r) => a + r.eventCount, 0);
+  const recTaps = fuRows(recsData).reduce((a, r) => a + r.eventCount, 0);
   const convRate = starts > 0 ? Math.round(completes / starts * 100) : 0;
   const dropRate = starts > 0 ? Math.round(abandoned / starts * 100) : 0;
-
   document.getElementById('fu-kpis').innerHTML = `
     <div class="kpi"><div class="kpi-label">Booking starts</div><div class="kpi-val">${starts.toLocaleString()}</div><div class="kpi-delta">guests who began a booking</div></div>
     <div class="kpi"><div class="kpi-label">Completed</div><div class="kpi-val">${completes.toLocaleString()}</div><div class="kpi-delta ${convRate>=20?'up':'dn'}">${convRate}% conversion rate</div></div>
     <div class="kpi"><div class="kpi-label">Abandoned</div><div class="kpi-val">${abandoned.toLocaleString()}</div><div class="kpi-delta dn">${dropRate}% of starters left</div></div>
-    <div class="kpi"><div class="kpi-label">Rec carousel taps</div><div class="kpi-val">${recTaps.toLocaleString()}</div><div class="kpi-delta" style="color:var(--amber)">⚠ no impression data yet</div></div>
-  `;
+    <div class="kpi"><div class="kpi-label">Rec carousel taps</div><div class="kpi-val">${recTaps.toLocaleString()}</div><div class="kpi-delta" style="color:var(--amber)">⚠ no impression data</div></div>`;
+}
+
+function fuRenderScreenList(rows) {
+  const el = document.getElementById('fu-screen-list');
+  const maxViews = rows[0]?.screenPageViews || 1;
+  // Filter out loading/root screens for cleaner list
+  const filtered = rows.filter(r => !['/', '/LoadingScreen'].includes(r.unifiedScreenName));
+
+  el.innerHTML = filtered.map(r => {
+    const screen = r.unifiedScreenName;
+    const meta = SCREEN_META[screen] || { name: screen, icon: '📱', dept: 'other' };
+    const pct = Math.round(r.screenPageViews / maxViews * 100);
+    const avgTime = r.userEngagementDuration > 0 ? Math.round(r.userEngagementDuration / r.screenPageViews) : 0;
+    return `<div class="fu-screen-item" data-screen="${screen}" onclick="fuSelectScreen('${screen}', ${r.screenPageViews}, ${r.userEngagementDuration})">
+      <div style="display:flex;align-items:center;gap:7px;padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s" onmouseenter="this.style.background='var(--bg2)'" onmouseleave="this.style.background=''">
+        <span style="font-size:14px;flex-shrink:0">${meta.icon}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:11px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${meta.name}</div>
+          <div style="font-size:9px;color:var(--text3);margin-top:2px">${r.screenPageViews.toLocaleString()} views${avgTime>0?' · '+avgTime+'s avg':''}</div>
+          <div style="height:3px;background:var(--bg3);border-radius:10px;margin-top:4px;overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--teal);border-radius:10px"></div></div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function fuSelectScreen(screen, views, engagementTotal) {
+  // Highlight selected
+  document.querySelectorAll('.fu-screen-item > div').forEach(el => el.style.background = '');
+  const selected = document.querySelector(`.fu-screen-item[data-screen="${CSS.escape(screen)}"] > div`);
+  if (selected) selected.style.background = 'var(--teal-l)';
+
+  const meta = SCREEN_META[screen] || { name: screen, icon: '📱' };
+  const avgTime = views > 0 && engagementTotal > 0 ? Math.round(engagementTotal / views) : 0;
+
+  document.getElementById('fu-screen-title').textContent = `${meta.icon} ${meta.name}`;
+  document.getElementById('fu-screen-sub').textContent = `${views.toLocaleString()} screen views · ${avgTime > 0 ? avgTime + 's avg time' : 'no time data'}`;
+  document.getElementById('fu-screen-badge').textContent = screen;
+
+  // Get click_events for this screen
+  const screenClicks = fuClickData.filter(r => {
+    const src = r['customEvent:source_screen'] || '';
+    const mod = r['customEvent:source_module'] || '';
+    // Match by screen path patterns
+    if (screen === '/home') return mod === 'home';
+    if (screen === '/fullmenu') return src === 'index' && mod === 'dining';
+    if (screen === '/cart') return src === 'cart';
+    if (screen === '/activity' || screen === '/activity/categories') return mod === 'activity';
+    if (screen === '/activity/booking') return src === 'booking' && mod === 'activity';
+    if (screen === '/restaurant') return mod === 'restaurant';
+    if (screen === '/chat') return src === 'chat' || mod === 'chat';
+    if (screen === '/confirmation') return src === 'confirmation';
+    return false;
+  }).sort((a, b) => b.eventCount - a.eventCount);
+
+  const detail = document.getElementById('fu-screen-detail');
+
+  if (screen === '/chat') {
+    detail.innerHTML = `
+      <div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:14px;font-size:11px;color:var(--amber-d);line-height:1.6">
+        <strong>⚠ Genie AI Chat is the 4th most visited screen</strong> with ${views.toLocaleString()} views — but has <strong>zero click tracking</strong> inside it. You can see guests arrive but nothing about what they ask, order, or do. This is your biggest analytics blind spot. Add <code>click_event</code> tracking to: message send, quick reply chip taps, and any booking action initiated from chat.
+      </div>
+      <div style="font-size:11px;color:var(--text3)">No interaction data available — instrumentation required.</div>`;
+    return;
+  }
+
+  if (!screenClicks.length) {
+    detail.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:40px 0;text-align:center">No click_event data for this screen in the selected period.<br><span style="font-size:9px;margin-top:6px;display:block">This may mean source_module/source_screen isn't being passed for this screen.</span></div>`;
+    return;
+  }
+
+  const maxCount = screenClicks[0].eventCount;
+  const total = screenClicks.reduce((a, r) => a + r.eventCount, 0);
+
+  detail.innerHTML = `
+    <div class="sec-lbl" style="margin-bottom:12px">Interactions on this screen · ${screenClicks.length} event types · ${total.toLocaleString()} total taps</div>
+    ${screenClicks.slice(0, 15).map(r => {
+      const label = r['customEvent:label'] || '—';
+      const value = r['customEvent:value'] || '';
+      const pct = Math.round(r.eventCount / total * 100);
+      return `<div class="fu-bar-row">
+        <div class="fu-bar-label" title="${label}${value?' · '+value:''}">${label}${value?` <span style="color:var(--text3);font-size:9px">· ${value}</span>`:''}</div>
+        <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(r.eventCount/maxCount*100)}%;background:var(--teal)"></div></div>
+        <div class="fu-bar-val">${r.eventCount.toLocaleString()}</div>
+        <div class="fu-bar-pct">${pct}%</div>
+      </div>`;
+    }).join('')}
+    ${screenClicks.length > 15 ? `<div style="font-size:10px;color:var(--text3);margin-top:8px">+${screenClicks.length - 15} more event types</div>` : ''}`;
 }
 
 function fuRenderFunnel(data) {
   const rows = fuRows(data);
-  const starts = rows.filter(r => r.eventName === 'booking_start').reduce((a, r) => a + r.count, 0);
-  const completes = rows.filter(r => r.eventName === 'booking_complete').reduce((a, r) => a + r.count, 0);
-  const abandoned = rows.filter(r => r.eventName === 'booking_abandoned').reduce((a, r) => a + r.count, 0);
-
-  if (!starts) { fuError('fu-funnel-body', 'No booking events in this period'); return; }
-
-  const startToComplete = starts > 0 ? Math.round(completes/starts*100) : 0;
-  const startToAbandon = starts > 0 ? Math.round(abandoned/starts*100) : 0;
+  const starts = rows.filter(r => r.eventName === 'booking_start').reduce((a, r) => a + r.eventCount, 0);
+  const completes = rows.filter(r => r.eventName === 'booking_complete').reduce((a, r) => a + r.eventCount, 0);
+  const abandoned = rows.filter(r => r.eventName === 'booking_abandoned').reduce((a, r) => a + r.eventCount, 0);
+  if (!starts) { fuErrorEl('fu-funnel-body', 'No booking events in this period'); return; }
+  const convRate = Math.round(completes / starts * 100);
+  const dropRate = Math.round(abandoned / starts * 100);
   const maxVal = starts;
-
-  const steps = [
-    { label: 'Booking started', val: starts, color: 'var(--blue)', note: '' },
-    { label: 'Abandoned', val: abandoned, color: 'var(--amber)', note: `${startToAbandon}% of starters` },
-    { label: 'Completed', val: completes, color: 'var(--teal)', note: `${startToComplete}% of starters` },
-  ];
-
-  const noteEl = document.getElementById('fu-funnel-note');
-  if (noteEl) noteEl.textContent = 'source_module (not set) — dept breakdown pending engineering fix';
-
   document.getElementById('fu-funnel-body').innerHTML = `
     <div class="fu-funnel">
-      ${steps.map((s, i) => `
-        <div class="fu-funnel-step">
-          <div class="fu-funnel-bar-wrap">
-            <div class="fu-funnel-bar" style="height:${Math.max(8,Math.round(s.val/maxVal*130))}px;background:${s.color}"></div>
-          </div>
-          <div class="fu-funnel-meta">
-            <div class="fu-funnel-label2">${s.label}</div>
-            <div class="fu-funnel-num">${s.val.toLocaleString()}</div>
-            <div class="fu-funnel-rate" style="color:${i===2?'var(--teal)':i===1?'var(--amber)':'var(--text3)'}">${s.note || '100%'}</div>
-          </div>
-          ${i < steps.length-1 ? '<div class="fu-funnel-arrow">→</div>' : ''}
-        </div>`).join('')}
-    </div>
-    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
-      <div class="sec-lbl">What this means</div>
-      <div style="font-size:11px;color:var(--text2);line-height:1.7">
-        Out of every <strong>${starts.toLocaleString()} guests</strong> who started a booking, only <strong>${completes.toLocaleString()} completed</strong> — a <strong style="color:${startToComplete>=20?'var(--teal)':'var(--red)'}">${startToComplete}% conversion rate</strong>. 
-        <strong>${abandoned.toLocaleString()} guests abandoned</strong> (${startToAbandon}% of starters). 
-        ${startToComplete < 20 ? `This is <strong>below the 20% benchmark</strong> — the cart screen is the most likely drop-off point.` : `This is above the 20% benchmark.`}
-        Dept-level breakdown requires engineering to fix <code>source_module</code> parameter passing.
+      <div class="fu-funnel-step">
+        <div class="fu-funnel-bar-wrap"><div class="fu-funnel-bar" style="height:140px;background:var(--blue)"></div></div>
+        <div class="fu-funnel-meta"><div class="fu-funnel-label2">Started</div><div class="fu-funnel-num">${starts.toLocaleString()}</div><div class="fu-funnel-rate" style="color:var(--text3)">100%</div></div>
+        <div class="fu-funnel-arrow">→</div>
       </div>
+      <div class="fu-funnel-step">
+        <div class="fu-funnel-bar-wrap"><div class="fu-funnel-bar" style="height:${Math.max(8,Math.round(abandoned/maxVal*140))}px;background:var(--amber)"></div></div>
+        <div class="fu-funnel-meta"><div class="fu-funnel-label2">Abandoned</div><div class="fu-funnel-num">${abandoned.toLocaleString()}</div><div class="fu-funnel-rate" style="color:var(--amber)">${dropRate}% of starters</div></div>
+        <div class="fu-funnel-arrow">→</div>
+      </div>
+      <div class="fu-funnel-step">
+        <div class="fu-funnel-bar-wrap"><div class="fu-funnel-bar" style="height:${Math.max(8,Math.round(completes/maxVal*140))}px;background:var(--teal)"></div></div>
+        <div class="fu-funnel-meta"><div class="fu-funnel-label2">Completed</div><div class="fu-funnel-num">${completes.toLocaleString()}</div><div class="fu-funnel-rate" style="color:${convRate>=20?'var(--teal)':'var(--red)'}">${convRate}% conversion</div></div>
+      </div>
+    </div>
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--text2);line-height:1.7">
+      ${convRate < 20 ? `⚠ <strong>${convRate}% conversion is below the 20% benchmark.</strong> ${abandoned.toLocaleString()} guests abandoned — more than ${Math.round(abandoned/completes*10)/10}× the number who completed. The cart screen is the most likely drop-off point.` : `✓ <strong>${convRate}% conversion is above benchmark.</strong> Focus on growing starts rather than fixing conversion.`}
+      Dept-level breakdown requires <code>source_module</code> fix from engineering.
     </div>`;
 }
 
-function fuBarChart(containerId, rows, labelKey, valueKey, color = 'var(--teal)', topN = 10) {
-  const top = rows.slice(0, topN);
-  const maxVal = top[0]?.count || 1;
-  const total = top.reduce((a, r) => a + r.count, 0);
-  if (!top.length) { fuError(containerId, 'No data in this period'); return; }
-  document.getElementById(containerId).innerHTML = top.map(r => {
-    const label = r[labelKey] || r['customEvent:value'] || r['customEvent:label'] || '—';
-    const subLabel = valueKey ? (r[valueKey] || '') : '';
-    const pct = total > 0 ? Math.round(r.count/total*100) : 0;
+function fuRenderRecs(data) {
+  const rows = fuRows(data).sort((a, b) => b.eventCount - a.eventCount);
+  if (!rows.length) { document.getElementById('fu-rec-body').innerHTML = '<div style="font-size:11px;color:var(--text3);padding:8px 0">No recommendation taps in this period.</div>'; return; }
+  const maxVal = rows[0].eventCount;
+  const total = rows.reduce((a, r) => a + r.eventCount, 0);
+  document.getElementById('fu-rec-body').innerHTML = rows.slice(0, 12).map(r => {
+    const label = r['customEvent:value'] || r['customEvent:label'] || '—';
+    const pct = Math.round(r.eventCount / total * 100);
     return `<div class="fu-bar-row">
-      <div class="fu-bar-label" title="${label}${subLabel?' · '+subLabel:''}">${label}${subLabel?` <span style="color:var(--text3);font-size:9px">· ${subLabel}</span>`:''}</div>
-      <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(r.count/maxVal*100)}%;background:${color}"></div></div>
-      <div class="fu-bar-val">${r.count.toLocaleString()}</div>
+      <div class="fu-bar-label">${label}</div>
+      <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(r.eventCount/maxVal*100)}%;background:var(--teal)"></div></div>
+      <div class="fu-bar-val">${r.eventCount.toLocaleString()}</div>
       <div class="fu-bar-pct">${pct}%</div>
     </div>`;
   }).join('');
 }
 
-function fuRenderHome(data) {
-  const rows = fuRows(data).sort((a, b) => b.count - a.count);
-  const qa = rows.filter(r => r['customEvent:label'] === 'quick_actions');
-  const nav = rows.filter(r => r['customEvent:label'] === 'bottom_navigation');
-  fuBarChart('fu-qa-body', qa, 'customEvent:value', null, 'var(--teal)');
-  fuBarChart('fu-nav-body', nav, 'customEvent:value', null, 'var(--blue)');
-}
-
-function fuRenderIRD(data) {
-  const rows = fuRows(data).sort((a, b) => b.count - a.count);
-  const menuActions = rows.filter(r => ['dining_tab_button','menu_category'].includes(r['customEvent:label']));
-  const items = rows.filter(r => r['customEvent:label'] === 'dining_menu_item');
-  fuBarChart('fu-ird-body', menuActions, 'customEvent:label', 'customEvent:value', 'var(--teal)');
-  fuBarChart('fu-items-body', items, 'customEvent:value', null, 'var(--blue)');
-}
-
-function fuRenderCart(data) {
-  const rows = fuRows(data).sort((a, b) => b.count - a.count);
-  const actions = rows.filter(r => !['quantity_increase','quantity_decrease'].includes(r['customEvent:label']));
-  const qty = rows.filter(r => ['quantity_increase','quantity_decrease'].includes(r['customEvent:label']));
-  fuBarChart('fu-cart-body', actions, 'customEvent:label', 'customEvent:value', 'var(--teal)');
-  fuBarChart('fu-qty-body', qty, 'customEvent:value', 'customEvent:label', 'var(--amber)');
-}
-
-function fuRenderSpotlight(data) {
-  const rows = fuRows(data).sort((a, b) => b.count - a.count);
-  fuBarChart('fu-spotlight-body', rows, 'customEvent:label', 'customEvent:value', 'var(--blue)', 15);
-}
-
-function fuRenderRecs(data) {
-  const rows = fuRows(data).sort((a, b) => b.count - a.count);
-  if (!rows.length) {
-    document.getElementById('fu-rec-body').innerHTML = `<div style="font-size:11px;color:var(--text3);padding:8px 0">No recommendation taps in this period.</div>`;
-    return;
-  }
-  fuBarChart('fu-rec-body', rows, 'customEvent:value', null, 'var(--teal)', 15);
-}
-
-function fuRenderInsights(funnelData, recsData, irdData, cartData, homeData) {
+function fuRenderInsights(funnelData, recsData, screenData) {
   const fRows = fuRows(funnelData);
-  const starts = fRows.filter(r => r.eventName === 'booking_start').reduce((a, r) => a + r.count, 0);
-  const completes = fRows.filter(r => r.eventName === 'booking_complete').reduce((a, r) => a + r.count, 0);
-  const abandoned = fRows.filter(r => r.eventName === 'booking_abandoned').reduce((a, r) => a + r.count, 0);
-  const recTaps = fuRows(recsData).reduce((a, r) => a + r.count, 0);
+  const starts = fRows.filter(r => r.eventName === 'booking_start').reduce((a, r) => a + r.eventCount, 0);
+  const completes = fRows.filter(r => r.eventName === 'booking_complete').reduce((a, r) => a + r.eventCount, 0);
+  const abandoned = fRows.filter(r => r.eventName === 'booking_abandoned').reduce((a, r) => a + r.eventCount, 0);
+  const recTaps = fuRows(recsData).reduce((a, r) => a + r.eventCount, 0);
   const convRate = starts > 0 ? Math.round(completes/starts*100) : 0;
-  const dropRate = starts > 0 ? Math.round(abandoned/starts*100) : 0;
 
-  const homeRows = fuRows(homeData).sort((a, b) => b.count - a.count);
-  const topQA = homeRows.filter(r => r['customEvent:label'] === 'quick_actions')[0];
-  const topNav = homeRows.filter(r => r['customEvent:label'] === 'bottom_navigation')[0];
-
-  const irdRows = fuRows(irdData).sort((a, b) => b.count - a.count);
-  const topItem = irdRows.filter(r => r['customEvent:label'] === 'dining_menu_item')[0];
-
-  const cartRows = fuRows(cartData).sort((a, b) => b.count - a.count);
-  const placeOrders = cartRows.filter(r => r['customEvent:label'] === 'primary_cta').reduce((a, r) => a + r.count, 0);
-  const qtyChanges = cartRows.filter(r => ['quantity_increase','quantity_decrease'].includes(r['customEvent:label'])).reduce((a, r) => a + r.count, 0);
+  const homeViews = screenData.find(r => r.unifiedScreenName === '/home')?.screenPageViews || 0;
+  const chatViews = screenData.find(r => r.unifiedScreenName === '/chat')?.screenPageViews || 0;
+  const activityViews = screenData.find(r => r.unifiedScreenName === '/activity/categories')?.screenPageViews || 0;
+  const irdViews = screenData.find(r => r.unifiedScreenName === '/fullmenu')?.screenPageViews || 0;
+  const activityBookings = screenData.find(r => r.unifiedScreenName === '/activity/booking')?.screenPageViews || 0;
 
   const insights = [];
 
-  // Conversion insight
   if (convRate < 15) {
-    insights.push({ type: 'alert', text: `Booking conversion is critically low at <strong>${convRate}%</strong> — only ${completes.toLocaleString()} of ${starts.toLocaleString()} starters completed. Industry benchmark for in-app ordering is 20–30%. The cart screen is the most likely drop-off point — we need cart_view and cart_total data to confirm.` });
+    insights.push({ type: 'alert', text: `Booking conversion is critically low at <strong>${convRate}%</strong> — only ${completes.toLocaleString()} of ${starts.toLocaleString()} starters completed. Industry benchmark is 20–30%. The cart screen is the most likely drop-off point.` });
   } else if (convRate < 25) {
-    insights.push({ type: 'warn', text: `Booking conversion is <strong>${convRate}%</strong> — below the 25% benchmark. ${abandoned.toLocaleString()} guests abandoned (${dropRate}% of starters). Priority fix: add cart_total to cart_request_tap so we can see if high-value carts convert differently.` });
+    insights.push({ type: 'warn', text: `Booking conversion is <strong>${convRate}%</strong> — below the 25% target. ${abandoned.toLocaleString()} guests started but didn't complete. Adding cart_total data would reveal whether high-value carts convert differently.` });
   } else {
-    insights.push({ type: '', text: `Booking conversion is healthy at <strong>${convRate}%</strong> — ${completes.toLocaleString()} completions from ${starts.toLocaleString()} starts. Focus on growing top-of-funnel starts rather than fixing conversion.` });
+    insights.push({ type: '', text: `Booking conversion is healthy at <strong>${convRate}%</strong>. Focus on growing starts rather than fixing conversion.` });
   }
 
-  // Abandonment insight
-  if (abandoned > completes) {
-    insights.push({ type: 'alert', text: `<strong>More guests abandon than complete</strong> — ${abandoned.toLocaleString()} abandoned vs ${completes.toLocaleString()} completed. This is a product problem, not a demand problem. Guests want to order but something stops them. Most likely culprits: delivery location confusion, special request flow, or cart complexity.` });
+  if (chatViews > 0 && homeViews > 0) {
+    const chatRate = Math.round(chatViews / homeViews * 100);
+    insights.push({ type: 'warn', text: `<strong>Genie AI Chat has ${chatViews.toLocaleString()} screen views</strong> — ${chatRate}% of home screen traffic. It's the 4th most visited screen, yet has zero interaction tracking. You're blind to everything that happens inside it. This is a higher priority gap than the IRD recommendation carousel.` });
   }
 
-  // Quick actions insight
-  if (topQA) {
-    insights.push({ type: '', text: `Most popular quick action: <strong>"${topQA['customEvent:value']}"</strong> with ${topQA.count.toLocaleString()} taps. This tells you what guests want most when they open the app — make sure this flow is frictionless.` });
+  if (activityViews > 0 && irdViews > 0) {
+    insights.push({ type: '', text: `<strong>Activity is the 2nd most visited screen</strong> with ${activityViews.toLocaleString()} views — more than IRD full menu (${irdViews.toLocaleString()}). Yet Activity has almost no click tracking beyond booking_complete. The mood picker and activity card taps are completely invisible.` });
   }
 
-  // IRD item insight
-  if (topItem) {
-    insights.push({ type: '', text: `Most viewed IRD item: <strong>"${topItem['customEvent:value']}"</strong> with ${topItem.count.toLocaleString()} views. Cross-reference this with your actual order data — if views are high but orders are low, the item description or price may be the barrier.` });
+  if (activityViews > 0 && activityBookings > 0) {
+    const actConv = Math.round(activityBookings / activityViews * 100);
+    insights.push({ type: actConv < 30 ? 'warn' : '', text: `Activity list → booking conversion: <strong>${actConv}%</strong> (${activityBookings.toLocaleString()} bookings from ${activityViews.toLocaleString()} list views). ${actConv < 30 ? 'This is low — guests browse but don\'t book. The mood picker may not be surfacing relevant activities.' : 'Strong conversion from browse to book.'}` });
   }
 
-  // Recommendation insight
   if (recTaps > 0 && starts > 0) {
-    const recRate = Math.round(recTaps/starts*100);
-    insights.push({ type: 'warn', text: `Recommendation carousel generated <strong>${recTaps.toLocaleString()} taps</strong> (${recRate}% of booking starters). We can't calculate true tap rate without impression data — <strong>recommendation_impression is the single most important missing event</strong>. Once added, we can prove the carousel's ROI to leadership with hard numbers.` });
-  }
-
-  // Cart vs qty insight
-  if (qtyChanges > 0 && placeOrders > 0) {
-    const engagementRatio = Math.round(qtyChanges/placeOrders);
-    insights.push({ type: '', text: `Guests who reach the cart make <strong>${engagementRatio} quantity adjustments per order</strong> — this means they're engaged and considering their choices carefully, not impulsively ordering. Consider using this moment to surface the recommendation carousel more prominently.` });
+    const recRate = Math.round(recTaps / starts * 100);
+    insights.push({ type: 'warn', text: `Recommendation carousel: <strong>${recTaps.toLocaleString()} taps</strong> (${recRate}% of booking starters). Without impression data, we can't calculate true engagement rate. <strong>recommendation_impression</strong> remains the single highest-ROI instrumentation fix — it would let you prove carousel revenue impact to leadership.` });
   }
 
   document.getElementById('fu-insights-body').innerHTML = insights.map(i =>
@@ -4239,12 +4216,6 @@ function fuRenderInsights(funnelData, recsData, irdData, cartData, homeData) {
   ).join('');
 }
 
-async function fuGenerateInsights() {
-  if (Object.keys(fuAllData).length === 0) { await fuLoad(true); return; }
-  fuRenderInsights(fuAllData.funnel, fuAllData.recs, fuAllData.ird, fuAllData.cart, fuAllData.home);
-}
-
-/* ══════════════════════════════════════════════════════════
    KANBAN TASK BOARD
 ══════════════════════════════════════════════════════════ */
 let kbTasks = [];         // all tasks from Supabase
