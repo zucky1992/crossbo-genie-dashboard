@@ -163,7 +163,32 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
 .prog-bar{height:100%;background:var(--teal);border-radius:10px;transition:width .3s ease;width:0}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 
-/* ── KANBAN BOARD ── */
+/* ── FEATURE USAGE ── */
+.fu-status{font-size:10px;padding:4px 12px;border-radius:20px;display:inline-flex;align-items:center;gap:5px}
+.fu-ok{background:var(--teal-l);color:var(--teal-d)}
+.fu-warn{background:var(--amber-l);color:var(--amber-d)}
+.fu-err{background:var(--red-l);color:var(--red-d)}
+.fu-range-bar{background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;height:44px;display:flex;align-items:center;gap:10px;flex-shrink:0}
+.fu-range-chip{font-size:10px;padding:5px 14px;border:1px solid var(--border);border-radius:20px;cursor:pointer;background:transparent;color:var(--text2);font-family:var(--sans);transition:all .12s}
+.fu-range-chip.on{background:var(--text);color:var(--bg);border-color:var(--text)}
+.fu-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-bottom:16px}
+.fu-funnel-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.fu-funnel-label{font-size:11px;color:var(--text2);width:140px;flex-shrink:0}
+.fu-funnel-track{flex:1;height:6px;background:var(--bg2);border-radius:10px;overflow:hidden}
+.fu-funnel-fill{height:100%;border-radius:10px;background:var(--teal);transition:width .4s}
+.fu-funnel-val{font-size:10px;color:var(--text2);width:70px;text-align:right;flex-shrink:0}
+.fu-label-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)}
+.fu-label-row:last-child{border-bottom:none}
+.fu-label-name{font-size:11px;color:var(--text);flex:1}
+.fu-label-count{font-size:11px;color:var(--text2);font-variant-numeric:tabular-nums;min-width:50px;text-align:right}
+.fu-label-pct{font-size:9px;color:var(--text3);min-width:38px;text-align:right}
+.fu-gap-badge{font-size:8px;padding:1px 6px;border-radius:10px;margin-left:6px}
+.fu-partial{background:var(--amber-l);color:var(--amber-d)}
+.fu-missing{background:var(--red-l);color:var(--red-d)}
+.fu-loading{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text3);padding:20px 0}
+.fu-spinner{width:14px;height:14px;border:2px solid var(--border2);border-top-color:var(--teal);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
 .kb-filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
 .kb-chip{font-size:10px;padding:5px 14px;border:1px solid var(--border);border-radius:20px;cursor:pointer;background:transparent;color:var(--text2);font-family:var(--sans);transition:all .12s;user-select:none}
 .kb-chip:hover{background:var(--bg2);color:var(--text)}
@@ -309,6 +334,9 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
     </button>
     <button class="nav-item" onclick="go('ga',this)">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 2"/></svg>GA Analytics
+    </button>
+    <button class="nav-item" onclick="go('features',this)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M2 12V6l6-4 6 4v6"/><path d="M6 16v-5h4v5"/><rect x="6" y="7" width="4" height="3" rx=".5"/></svg>Feature Usage
     </button>
     <button class="nav-item" onclick="go('dept',this)">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M1 5h14M1 9h14M1 13h14"/></svg>Dept Metrics
@@ -552,6 +580,100 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
 </div>
 
 <!-- ══ FEEDBACK ══ -->
+
+<!-- ══ FEATURE USAGE ══ -->
+<div class="page" id="p-features">
+  <div class="topbar">
+    <div>
+      <div class="tb-title">Feature Usage</div>
+      <div class="tb-sub" id="fu-sub">Live from GA4 · orascom-ohm1 · property 503373961</div>
+    </div>
+    <div class="tb-right">
+      <span class="fu-status fu-warn" id="fu-api-status">⟳ Not loaded</span>
+      <button class="btn" onclick="fuLoad(true)">↻ Refresh</button>
+    </div>
+  </div>
+
+  <!-- Date range sub-bar -->
+  <div class="fu-range-bar">
+    <span style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3)">Period</span>
+    <button class="fu-range-chip on" data-start="7daysAgo" data-end="today" onclick="fuSetRange(this)">7 days</button>
+    <button class="fu-range-chip" data-start="30daysAgo" data-end="today" onclick="fuSetRange(this)">30 days</button>
+    <button class="fu-range-chip" data-start="90daysAgo" data-end="today" onclick="fuSetRange(this)">90 days</button>
+    <span style="margin-left:auto;font-size:10px;color:var(--text3)" id="fu-last-updated"></span>
+  </div>
+
+  <div class="scroll">
+
+    <!-- KPI row -->
+    <div class="kpi-row kpi-r4" id="fu-kpis"></div>
+
+    <!-- Booking funnel + spotlight -->
+    <div class="fu-grid">
+      <div class="card">
+        <div class="card-head"><div><div class="card-title">Booking funnel</div><div class="card-sub">Start → Complete by department</div></div></div>
+        <div id="fu-funnel-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading from GA4...</div></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><div class="card-title">Spotlight taps</div><div class="card-sub">Which cards drive clicks from home screen</div></div></div>
+        <div id="fu-spotlight-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading from GA4...</div></div>
+      </div>
+    </div>
+
+    <!-- IRD menu + quick actions -->
+    <div class="fu-grid">
+      <div class="card">
+        <div class="card-head"><div><div class="card-title">IRD menu interactions</div><div class="card-sub">Tab, category, item taps · dining module</div></div></div>
+        <div id="fu-ird-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading from GA4...</div></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><div class="card-title">Quick actions</div><div class="card-sub">Home screen pill taps · which prompts guests use</div></div></div>
+        <div id="fu-qa-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading from GA4...</div></div>
+      </div>
+    </div>
+
+    <!-- Cart + recommendations -->
+    <div class="fu-grid">
+      <div class="card">
+        <div class="card-head"><div><div class="card-title">Cart interactions</div><div class="card-sub">Place order, quantity changes · cart screen</div></div>
+          <span class="fu-status fu-warn" style="font-size:9px;padding:2px 8px">🟡 cart_view partial</span>
+        </div>
+        <div id="fu-cart-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading from GA4...</div></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><div class="card-title">Recommendation taps</div><div class="card-sub">"Add some more delicacies" carousel · add_suggested_item</div></div>
+          <span class="fu-status fu-err" style="font-size:9px;padding:2px 8px">❌ impression missing</span>
+        </div>
+        <div id="fu-rec-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading from GA4...</div></div>
+      </div>
+    </div>
+
+    <!-- Instrumentation gap tracker -->
+    <div class="card last">
+      <div class="card-head"><div><div class="card-title">Instrumentation gap tracker</div><div class="card-sub">Events pending from engineering · auto-populates when data arrives</div></div></div>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Event</th><th>Screen</th><th>Status</th><th>What's missing</th><th>Priority</th></tr></thead>
+        <tbody>
+          <tr><td>home_view</td><td>Home</td><td><span class="pill pr">❌ Missing</span></td><td>No screen-view event on home load</td><td><span class="pill pa">Medium</span></td></tr>
+          <tr><td>spotlight_impression</td><td>Home</td><td><span class="pill pr">❌ Missing</span></td><td>card_name, card_position not tracked</td><td><span class="pill pa">Medium</span></td></tr>
+          <tr><td>spotlight_tap → card_position</td><td>Home</td><td><span class="pill pa">🟡 Partial</span></td><td>Tap fires, index missing</td><td><span class="pill pa">Medium</span></td></tr>
+          <tr><td>item_view → item_id, price</td><td>IRD Menu</td><td><span class="pill pa">🟡 Partial</span></td><td>item_name ✓ · item_id + price missing</td><td><span class="pill pa">Medium</span></td></tr>
+          <tr><td>item_add_to_cart → price, qty</td><td>IRD Menu</td><td><span class="pill pa">🟡 Partial</span></td><td>item_name ✓ · price + qty missing</td><td><span class="pill pg">Low</span></td></tr>
+          <tr><td>item_remove_from_cart</td><td>IRD Menu</td><td><span class="pill pr">❌ Missing</span></td><td>Minus stepper — no event fires</td><td><span class="pill pg">Low</span></td></tr>
+          <tr><td>cart_view</td><td>Cart</td><td><span class="pill pa">🟡 Partial</span></td><td>Abandon step set, no GA event with item_count/cart_total</td><td><span class="pill pa">Medium</span></td></tr>
+          <tr><td>recommendation_impression</td><td>Cart</td><td><span class="pill pr">❌ PRIORITY</span></td><td>No impression tracking on rec carousel</td><td><span class="pill pr">High</span></td></tr>
+          <tr><td>recommendation_added_to_cart</td><td>Cart</td><td><span class="pill pr">❌ PRIORITY</span></td><td>Tap tracked, add-to-cart not distinct</td><td><span class="pill pr">High</span></td></tr>
+          <tr><td>cart_request_tap → cart_total</td><td>Cart</td><td><span class="pill pa">🟡 Partial</span></td><td>Tap fires, cart_total/item_count missing</td><td><span class="pill pa">Medium</span></td></tr>
+          <tr><td>order_complete → order_id</td><td>Confirmation</td><td><span class="pill pa">🟡 Partial</span></td><td>Fires on cart not confirmation, order_id missing</td><td><span class="pill pa">Medium</span></td></tr>
+          <tr><td>special_request_tap</td><td>Cart</td><td><span class="pill pr">❌ Missing</span></td><td>Special Requests button — no event</td><td><span class="pill pg">Low</span></td></tr>
+          <tr><td>delivery_location_tap</td><td>Cart</td><td><span class="pill pr">❌ Missing</span></td><td>Delivery location dropdown — no event</td><td><span class="pill pg">Low</span></td></tr>
+          <tr><td>chat_with_us_tap</td><td>Confirmation</td><td><span class="pill pr">❌ Missing</span></td><td>Chat button — haptic only, no GA event</td><td><span class="pill pg">Low</span></td></tr>
+        </tbody>
+      </table></div>
+    </div>
+
+  </div>
+</div>
 
 <!-- ══ KANBAN TASK BOARD ══ -->
 <div class="page" id="p-kanban">
@@ -1924,6 +2046,7 @@ function rPage(id) {
   else if(id==='feedback') rFeedback();
   else if(id==='trends') rTrends();
   else if(id==='ga') rGA();
+  else if(id==='features') rFeatures();
   else if(id==='dept') rDept();
   else if(id==='topitems') rTopItems();
   else if(id==='hotels') rHotels();
@@ -3731,6 +3854,204 @@ function renderGAWeekly(){
   ]},options:{responsive:true,maintainAspectRatio:false,
     plugins:{legend:{position:'bottom',labels:{font:{size:9},boxWidth:8,padding:8}},datalabels:{}},
     scales:{x:{ticks:{font:{size:9}},grid:{display:false}},y:{ticks:{font:{size:9}},grid:{color:'rgba(128,128,128,0.1)'}},layout:{padding:{top:14}}}}});
+}
+
+/* ══════════════════════════════════════════════════════════
+   FEATURE USAGE — GA4 Data API via Netlify Function
+══════════════════════════════════════════════════════════ */
+const GA4_FN = '/.netlify/functions/ga4';
+let fuStartDate = '7daysAgo';
+let fuEndDate = 'today';
+let fuCache = {};
+let fuLoaded = false;
+
+function fuSetRange(el) {
+  document.querySelectorAll('.fu-range-chip').forEach(c => c.classList.remove('on'));
+  el.classList.add('on');
+  fuStartDate = el.dataset.start;
+  fuEndDate = el.dataset.end;
+  fuCache = {}; // bust cache on range change
+  fuLoad(true);
+}
+
+async function fuFetch(report) {
+  const key = `${report}:${fuStartDate}:${fuEndDate}`;
+  if (fuCache[key]) return fuCache[key];
+  const url = `${GA4_FN}?report=${report}&startDate=${fuStartDate}&endDate=${fuEndDate}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${report} fetch failed: ${res.status}`);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  fuCache[key] = data;
+  return data;
+}
+
+// Convert GA4 runReport rows into [{dim1, dim2, ..., count}]
+function fuRows(data) {
+  if (!data?.rows) return [];
+  const dims = data.dimensionHeaders?.map(h => h.name) || [];
+  return data.rows.map(r => {
+    const obj = { count: parseInt(r.metricValues?.[0]?.value || 0) };
+    dims.forEach((d, i) => { obj[d] = r.dimensionValues?.[i]?.value || ''; });
+    return obj;
+  });
+}
+
+function fuLoading(id) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = '<div class="fu-loading"><div class="fu-spinner"></div>Loading from GA4...</div>';
+}
+
+function fuError(id, msg) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = `<div style="font-size:11px;color:var(--red);padding:12px 0">⚠ ${msg}</div>`;
+}
+
+async function rFeatures() {
+  if (!fuLoaded) await fuLoad(false);
+}
+
+async function fuLoad(force = false) {
+  if (!force && fuLoaded) return;
+  fuLoaded = true;
+
+  const statusEl = document.getElementById('fu-api-status');
+  const subEl = document.getElementById('fu-sub');
+  if (statusEl) { statusEl.className = 'fu-status fu-warn'; statusEl.textContent = '⟳ Loading...'; }
+
+  // Set all sections to loading
+  ['fu-funnel-body','fu-spotlight-body','fu-ird-body','fu-qa-body','fu-cart-body','fu-rec-body'].forEach(fuLoading);
+
+  try {
+    // Fetch all reports in parallel
+    const [funnel, spotlight, ird, cart, recs, home] = await Promise.all([
+      fuFetch('booking_funnel'),
+      fuFetch('spotlight'),
+      fuFetch('ird_menu'),
+      fuFetch('cart'),
+      fuFetch('recommendations'),
+      fuFetch('home'),
+    ]);
+
+    fuRenderFunnel(funnel);
+    fuRenderSpotlight(spotlight);
+    fuRenderIRD(ird);
+    fuRenderCart(cart);
+    fuRenderRecs(recs);
+    fuRenderHome(home);
+    fuRenderKPIs(funnel, recs);
+
+    const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const lastEl = document.getElementById('fu-last-updated');
+    if (lastEl) lastEl.textContent = `Last updated ${now}`;
+    if (subEl) subEl.textContent = `Live from GA4 · orascom-ohm1 · ${fuStartDate} → ${fuEndDate}`;
+    if (statusEl) { statusEl.className = 'fu-status fu-ok'; statusEl.textContent = '● Live'; }
+
+  } catch(e) {
+    console.error('Feature usage load error:', e);
+    if (statusEl) { statusEl.className = 'fu-status fu-err'; statusEl.textContent = '⚠ API error'; }
+    ['fu-funnel-body','fu-spotlight-body','fu-ird-body','fu-qa-body','fu-cart-body','fu-rec-body']
+      .forEach(id => fuError(id, e.message));
+  }
+}
+
+function fuRenderKPIs(funnelData, recsData) {
+  const rows = fuRows(funnelData);
+  const starts = rows.filter(r => r.eventName === 'booking_start').reduce((a, r) => a + r.count, 0);
+  const completes = rows.filter(r => r.eventName === 'booking_complete').reduce((a, r) => a + r.count, 0);
+  const abandoned = rows.filter(r => r.eventName === 'booking_abandoned').reduce((a, r) => a + r.count, 0);
+  const recTaps = fuRows(recsData).reduce((a, r) => a + r.count, 0);
+  const convRate = starts > 0 ? Math.round(completes / starts * 100) : 0;
+
+  document.getElementById('fu-kpis').innerHTML = `
+    <div class="kpi"><div class="kpi-label">Booking starts</div><div class="kpi-val">${starts.toLocaleString()}</div><div class="kpi-delta">across all depts</div></div>
+    <div class="kpi"><div class="kpi-label">Booking completes</div><div class="kpi-val">${completes.toLocaleString()}</div><div class="kpi-delta ${convRate>=20?'up':'dn'}">${convRate}% of starts</div></div>
+    <div class="kpi"><div class="kpi-label">Abandoned</div><div class="kpi-val">${abandoned.toLocaleString()}</div><div class="kpi-delta dn">genuine exits</div></div>
+    <div class="kpi"><div class="kpi-label">Rec carousel taps</div><div class="kpi-val">${recTaps.toLocaleString()}</div><div class="kpi-delta">add_suggested_item · ❌ no impression data yet</div></div>
+  `;
+}
+
+function fuRenderFunnel(data) {
+  const rows = fuRows(data);
+  // Group by dept (source_module)
+  const depts = {};
+  rows.forEach(r => {
+    const dept = r['customEvent:source_module'] || 'unknown';
+    if (!depts[dept]) depts[dept] = { start: 0, complete: 0, abandon: 0 };
+    if (r.eventName === 'booking_start') depts[dept].start += r.count;
+    if (r.eventName === 'booking_complete') depts[dept].complete += r.count;
+    if (r.eventName === 'booking_abandoned') depts[dept].abandon += r.count;
+  });
+
+  const DEPT_NAMES = { dining: 'In-Room Dining', spa: 'SPA', activity: 'Activity', housekeeping: 'Housekeeping', taxi: 'Taxi', restaurant: 'Restaurant', store: 'Store' };
+  const sorted = Object.entries(depts).filter(([,v]) => v.start > 0).sort((a,b) => b[1].start - a[1].start);
+  if (!sorted.length) { fuError('fu-funnel-body', 'No booking events in this period'); return; }
+
+  const maxStart = Math.max(...sorted.map(([,v]) => v.start));
+  document.getElementById('fu-funnel-body').innerHTML = sorted.map(([dept, v]) => {
+    const conv = v.start > 0 ? Math.round(v.complete / v.start * 100) : 0;
+    const convCls = conv >= 30 ? 'up' : conv >= 15 ? '' : 'dn';
+    return `
+      <div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:11px;font-weight:500">${DEPT_NAMES[dept] || dept}</span>
+          <span style="font-size:10px;color:var(--${convCls==='up'?'teal':convCls==='dn'?'red':'text2'})">${conv}% conv.</span>
+        </div>
+        <div class="fu-funnel-row"><div class="fu-funnel-label" style="font-size:10px;color:var(--text3)">Starts</div>
+          <div class="fu-funnel-track"><div class="fu-funnel-fill" style="width:${Math.round(v.start/maxStart*100)}%;background:var(--blue)"></div></div>
+          <div class="fu-funnel-val">${v.start.toLocaleString()}</div></div>
+        <div class="fu-funnel-row"><div class="fu-funnel-label" style="font-size:10px;color:var(--text3)">Completes</div>
+          <div class="fu-funnel-track"><div class="fu-funnel-fill" style="width:${Math.round(v.complete/maxStart*100)}%;background:var(--teal)"></div></div>
+          <div class="fu-funnel-val">${v.complete.toLocaleString()}</div></div>
+      </div>`;
+  }).join('');
+}
+
+function fuRenderLabelList(containerId, rows, labelKey, valueKey, topN = 12) {
+  const top = rows.slice(0, topN);
+  const total = top.reduce((a, r) => a + r.count, 0);
+  if (!top.length) { fuError(containerId, 'No data in this period'); return; }
+  document.getElementById(containerId).innerHTML = top.map(r => `
+    <div class="fu-label-row">
+      <div class="fu-label-name">${r[labelKey] || r['customEvent:label'] || '—'}</div>
+      ${valueKey && r[valueKey] ? `<div style="font-size:10px;color:var(--text3);flex:1;padding:0 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r[valueKey]}</div>` : ''}
+      <div class="fu-label-count">${r.count.toLocaleString()}</div>
+      <div class="fu-label-pct">${total > 0 ? Math.round(r.count/total*100) : 0}%</div>
+    </div>`).join('');
+}
+
+function fuRenderSpotlight(data) {
+  const rows = fuRows(data).sort((a, b) => b.count - a.count);
+  fuRenderLabelList('fu-spotlight-body', rows, 'customEvent:label', 'customEvent:value');
+}
+
+function fuRenderIRD(data) {
+  const rows = fuRows(data).sort((a, b) => b.count - a.count);
+  fuRenderLabelList('fu-ird-body', rows, 'customEvent:label', 'customEvent:value');
+}
+
+function fuRenderCart(data) {
+  const rows = fuRows(data).sort((a, b) => b.count - a.count);
+  fuRenderLabelList('fu-cart-body', rows, 'customEvent:label', 'customEvent:value');
+}
+
+function fuRenderRecs(data) {
+  const rows = fuRows(data).sort((a, b) => b.count - a.count);
+  if (!rows.length) {
+    document.getElementById('fu-rec-body').innerHTML = `
+      <div style="font-size:11px;color:var(--text3);padding:16px 0;line-height:1.7">
+        ⚠ Only tap events tracked (add_suggested_item).<br>
+        <strong>Impression data missing</strong> — can't calculate tap rate.<br>
+        <span style="color:var(--red)">❌ recommendation_impression and recommendation_added_to_cart pending from engineering.</span>
+      </div>`;
+    return;
+  }
+  fuRenderLabelList('fu-rec-body', rows, 'customEvent:value', 'customEvent:source_module');
+}
+
+function fuRenderHome(data) {
+  const rows = fuRows(data).filter(r => r['customEvent:label'] === 'quick_actions').sort((a, b) => b.count - a.count);
+  fuRenderLabelList('fu-qa-body', rows, 'customEvent:value', null);
 }
 
 /* ══════════════════════════════════════════════════════════
