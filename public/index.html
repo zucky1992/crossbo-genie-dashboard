@@ -4571,63 +4571,176 @@ function aaRenderDeptBody(dept, rows, cfg) {
     return;
   }
 
-  // Get funnel stats for this dept
+  // ── Funnel for every dept ─────────────────────────────────────────────────
+  const MODULE_MAP = { ird:'dining', activity:'activity', spa:'spa', restaurant:'restaurant', taxi:'taxi', housekeeping:'housekeeping' };
+
+  // Dept-specific funnel steps built from click_event labels + booking events
+  const DEPT_FUNNELS = {
+    ird: [
+      { label: 'Menu opened', events: ['booking_start'], module: 'dining', eventName: 'booking_start' },
+      { label: 'Item viewed', labelMatch: 'dining_menu_item' },
+      { label: 'Added to cart', labelMatch: ['add_to_cart', 'add_to_cart_button'] },
+      { label: 'Cart opened', labelMatch: 'cart_button' },
+      { label: 'Order placed', events: ['booking_complete'], module: 'dining', eventName: 'booking_complete' },
+    ],
+    activity: [
+      { label: 'Activity opened', eventName: 'booking_view', module: 'activity' },
+      { label: 'Activity selected', labelMatch: 'activity_card' },
+      { label: 'Booking started', eventName: 'booking_start', module: 'activity' },
+      { label: 'Date selected', labelMatch: 'date_option' },
+      { label: 'Booking complete', eventName: 'booking_complete', module: 'activity' },
+    ],
+    spa: [
+      { label: 'SPA opened', eventName: 'booking_view', module: 'spa' },
+      { label: 'Treatment selected', labelMatch: ['service_selection', 'treatment', 'service_card'] },
+      { label: 'Booking started', eventName: 'booking_start', module: 'spa' },
+      { label: 'Date/time picked', labelMatch: 'date_option' },
+      { label: 'Booking complete', eventName: 'booking_complete', module: 'spa' },
+    ],
+    restaurant: [
+      { label: 'Restaurant opened', eventName: 'booking_view', module: 'restaurant' },
+      { label: 'Booking started', eventName: 'booking_start', module: 'restaurant' },
+      { label: 'Date selected', labelMatch: 'date_option' },
+      { label: 'Time selected', labelMatch: 'time_slot_option' },
+      { label: 'Reservation placed', eventName: 'booking_complete', module: 'restaurant' },
+    ],
+    taxi: [
+      { label: 'Taxi opened', eventName: 'booking_view', module: 'taxi' },
+      { label: 'Destination picked', labelMatch: 'destination_option' },
+      { label: 'Time selected', eventName: 'taxi_time_selected' },
+      { label: 'Vehicle selected', eventName: 'taxi_vehicle_selected' },
+      { label: 'Booking confirmed', eventName: 'booking_complete', module: 'taxi' },
+    ],
+    housekeeping: [
+      { label: 'HK opened', eventName: 'booking_start', module: 'housekeeping' },
+      { label: 'Item toggled', labelMatch: ['add_item', 'remove_item', 'add_remove_button'] },
+      { label: 'Category selected', labelMatch: 'housekeeping_tab_button' },
+      { label: 'Request placed', eventName: 'order' },
+      { label: 'Booking complete', eventName: 'booking_complete', module: 'housekeeping' },
+    ],
+    store: [
+      { label: 'Store entered', eventName: 'booking_start', module: 'store' },
+      { label: 'Category selected', labelMatch: 'category_selection' },
+      { label: 'Product viewed', labelMatch: 'product_view' },
+      { label: 'Added to cart', eventName: 'store_item_added_to_cart' },
+      { label: 'Order placed', eventName: 'booking_complete', module: 'store' },
+    ],
+    chat: [
+      { label: 'Chat opened', screen: '/chat' },
+      { label: 'Prompt tapped', labelMatch: 'chat_prompt' },
+      { label: 'Message sent', labelMatch: 'chat_send' },
+    ],
+    home: [
+      { label: 'Home opened', screen: '/home' },
+      { label: 'Quick action tapped', labelMatch: 'quick_actions' },
+      { label: 'Spotlight tapped', labelMatch: ['spotlight_carousel_card','spotlight_spa_card','spotlight_dish_card','spotlight_activity_card'] },
+      { label: 'Nav tapped', labelMatch: 'bottom_navigation' },
+    ],
+  };
+
+  // Calculate step counts
+  const funnelSteps = DEPT_FUNNELS[dept] || [];
+  const funnelData = funnelSteps.map(step => {
+    let count = 0;
+    if (step.eventName && aaFunnelData) {
+      // From booking funnel data
+      const fRows = aaRows(aaFunnelData);
+      count = fRows.filter(r => {
+        if (r.eventName !== step.eventName) return false;
+        if (step.module) return r['customEvent:source_module'] === step.module;
+        return true;
+      }).reduce((a, r) => a + r.eventCount, 0);
+      // Also check in dept rows for dedicated events
+      if (count === 0) {
+        count = rows.filter(r => r.eventName === step.eventName).reduce((a, r) => a + r.eventCount, 0);
+      }
+    }
+    if (step.labelMatch) {
+      const matches = Array.isArray(step.labelMatch) ? step.labelMatch : [step.labelMatch];
+      const labelKey = rows[0]?.['customEvent:label'] !== undefined ? 'customEvent:label' : 'label';
+      count = rows.filter(r => matches.includes(r[labelKey])).reduce((a, r) => a + r.eventCount, 0);
+    }
+    return { label: step.label, count };
+  }).filter(s => s.count > 0);
+
   let funnelHTML = '';
-  if (cfg.hasFunnel && aaFunnelData) {
-    const fRows = aaRows(aaFunnelData);
-    const MODULE_MAP = { ird:'dining', activity:'activity', spa:'spa', restaurant:'restaurant', taxi:'taxi', housekeeping:'housekeeping' };
+  if (funnelData.length >= 2) {
+    const maxCount = funnelData[0].count;
+    funnelHTML = `
+      <div style="margin-bottom:16px">
+        <div class="sec-lbl" style="margin-bottom:10px">User flow · where guests drop off</div>
+        <div style="display:flex;align-items:flex-end;gap:4px;height:100px;margin-bottom:8px">
+          ${funnelData.map((s, i) => {
+            const h = Math.max(8, Math.round(s.count / maxCount * 88));
+            const dropPct = i > 0 && funnelData[i-1].count > 0 ? Math.round((1 - s.count/funnelData[i-1].count)*100) : 0;
+            const color = i === 0 ? 'var(--blue)' : i === funnelData.length-1 ? 'var(--teal)' : `hsl(${180 - i*20},60%,45%)`;
+            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
+              ${i > 0 && dropPct > 0 ? `<div style="font-size:8px;color:var(--red);font-weight:500">-${dropPct}%</div>` : '<div style="font-size:8px"> </div>'}
+              <div style="width:100%;border-radius:3px 3px 0 0;background:${color};height:${h}px;transition:height .4s"></div>
+            </div>`;
+          }).join('<div style="flex:0 0 2px;align-self:flex-end;height:2px;background:var(--border2);margin-bottom:0"></div>')}
+        </div>
+        <div style="display:flex;gap:4px">
+          ${funnelData.map(s => `<div style="flex:1;text-align:center">
+            <div style="font-size:9px;font-weight:500;font-variant-numeric:tabular-nums">${s.count.toLocaleString()}</div>
+            <div style="font-size:8px;color:var(--text3);margin-top:2px;line-height:1.3">${s.label}</div>
+          </div>`).join('<div style="flex:0 0 2px"></div>')}
+        </div>
+      </div>`;
+  } else if (cfg.hasFunnel && aaFunnelData) {
+    // Fallback: simple booking start/complete/abandon from funnel data
     const mod = MODULE_MAP[dept];
     if (mod) {
+      const fRows = aaRows(aaFunnelData);
       const s = fRows.filter(r => r.eventName==='booking_start' && r['customEvent:source_module']===mod).reduce((a,r)=>a+r.eventCount,0);
       const c = fRows.filter(r => r.eventName==='booking_complete' && r['customEvent:source_module']===mod).reduce((a,r)=>a+r.eventCount,0);
       const ab = fRows.filter(r => r.eventName==='booking_abandoned' && r['customEvent:source_module']===mod).reduce((a,r)=>a+r.eventCount,0);
       if (s > 0) {
         const conv = Math.round(c/s*100);
-        funnelHTML = `<div class="aa-stat-row">
+        funnelHTML = `<div class="aa-stat-row" style="margin-bottom:16px">
           <div class="aa-stat"><div class="aa-stat-label">Booking starts</div><div class="aa-stat-val">${s.toLocaleString()}</div></div>
           <div class="aa-stat"><div class="aa-stat-label">Completed</div><div class="aa-stat-val">${c.toLocaleString()}</div><div class="aa-stat-sub" style="color:${conv>=20?'var(--teal)':'var(--red)'}">${conv}% conversion</div></div>
-          <div class="aa-stat"><div class="aa-stat-label">Abandoned</div><div class="aa-stat-val">${ab.toLocaleString()}</div><div class="aa-stat-sub" style="color:var(--amber)">${s>0?Math.round(ab/s*100):0}% of starters</div></div>
+          <div class="aa-stat"><div class="aa-stat-label">Abandoned</div><div class="aa-stat-val">${ab.toLocaleString()}</div><div class="aa-stat-sub" style="color:var(--amber)">${Math.round(ab/s*100)}% of starters</div></div>
         </div>`;
       }
     }
   }
 
-  // Top interactions
+  // ── All interactions — scrollable ─────────────────────────────────────────
   const labelKey = rows[0]['customEvent:label'] !== undefined ? 'customEvent:label' : 'label';
   const valueKey = rows[0]['customEvent:value'] !== undefined ? 'customEvent:value' : 'value';
   const eventKey = rows[0].eventName !== undefined ? 'eventName' : null;
-
-  const top = rows.slice(0, 12);
-  const maxCount = top[0]?.eventCount || 1;
-  const total = top.reduce((a, r) => a + r.eventCount, 0);
+  const maxCount2 = rows[0]?.eventCount || 1;
+  const total = rows.reduce((a, r) => a + r.eventCount, 0);
 
   const interactionsHTML = `
-    <div class="sec-lbl" style="margin-bottom:10px">Top interactions · ${rows.length} event types · ${total.toLocaleString()} total</div>
-    ${top.map(r => {
-      const evtName = eventKey ? r[eventKey] : '';
-      const isSpecial = evtName && evtName !== 'click_event';
-      const label = r[labelKey] || evtName || '—';
-      const value = r[valueKey] || '';
-      const pct = Math.round(r.eventCount / total * 100);
-      return `<div class="fu-bar-row">
-        <div class="fu-bar-label" title="${label}${value?' · '+value:''}">
-          ${isSpecial ? `<span style="font-size:8px;background:var(--blue-l);color:var(--blue-d);padding:1px 5px;border-radius:8px;margin-right:4px">${evtName}</span>` : ''}
-          ${label}${value ? ` <span style="color:var(--text3);font-size:9px">· ${value.slice(0,25)}${value.length>25?'...':''}</span>` : ''}
-        </div>
-        <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(r.eventCount/maxCount*100)}%;background:${isSpecial?'var(--blue)':'var(--teal)'}"></div></div>
-        <div class="fu-bar-val">${r.eventCount.toLocaleString()}</div>
-        <div class="fu-bar-pct">${pct}%</div>
-      </div>`;
-    }).join('')}
-    ${rows.length > 12 ? `<div style="font-size:10px;color:var(--text3);margin-top:6px">+${rows.length-12} more event types</div>` : ''}`;
+    <div class="sec-lbl" style="margin-bottom:10px">All interactions · ${rows.length} event types · ${total.toLocaleString()} total taps</div>
+    <div style="max-height:320px;overflow-y:auto;padding-right:4px">
+      ${rows.map(r => {
+        const evtName = eventKey ? r[eventKey] : '';
+        const isSpecial = evtName && evtName !== 'click_event';
+        const label = r[labelKey] || evtName || '—';
+        const value = r[valueKey] || '';
+        const pct = Math.round(r.eventCount / total * 100);
+        return `<div class="fu-bar-row">
+          <div class="fu-bar-label" title="${label}${value?' · '+value:''}">
+            ${isSpecial ? `<span style="font-size:8px;background:var(--blue-l);color:var(--blue-d);padding:1px 5px;border-radius:8px;margin-right:4px">${evtName}</span>` : ''}
+            ${label}${value ? ` <span style="color:var(--text3);font-size:9px">· ${value.slice(0,28)}${value.length>28?'...':''}</span>` : ''}
+          </div>
+          <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(r.eventCount/maxCount2*100)}%;background:${isSpecial?'var(--blue)':'var(--teal)'}"></div></div>
+          <div class="fu-bar-val">${r.eventCount.toLocaleString()}</div>
+          <div class="fu-bar-pct">${pct}%</div>
+        </div>`;
+      }).join('')}
+    </div>`;
 
   // Special notes per dept
   const NOTES = {
-    chat: `<div style="background:var(--teal-l);border:1px solid var(--teal);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--teal-d)">Chat tracks: back/home nav, suggested prompt taps (with text + position), and message sends (with text). This tells you what guests ask and which prompts they use most.</div>`,
-    taxi: `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Taxi has dedicated events: taxi_time_selected (date/time chosen) and taxi_vehicle_selected (vehicle + price). These appear with a blue label below.</div>`,
-    housekeeping: `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Laundry order total always = 0 (app bug — not dashboard issue). Housekeeping fires an <code>order</code> event with real total when request is placed.</div>`,
-    spa: `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Casa Cook SPA closed Jun 1 – Oct 15. Data here is pre-closure. BMS SPA (Chedi only) may show data separately. Instrument before reopening.</div>`,
-    store: `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Store is Chedi-only. Tracks: category cards, product views, filter opens, and store_item_added_to_cart (dedicated event with item name + price). "You may also like" recommendations on product detail page are not tracked.</div>`,
+    chat: `<div style="background:var(--teal-l);border:1px solid var(--teal);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--teal-d)">Chat tracks: back/home nav, suggested prompt taps (with text + position), and message sends (with text).</div>`,
+    taxi: `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Taxi has dedicated events (blue label): taxi_time_selected and taxi_vehicle_selected — richer than just booking_complete.</div>`,
+    housekeeping: `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Laundry order total is always 0 (app bug). Housekeeping fires an <code>order</code> event with real value when request is placed.</div>`,
+    spa: `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Casa Cook SPA closed Jun 1 – Oct 15. Data is pre-closure. BMS SPA (Chedi only) may show separately. Instrument before reopening.</div>`,
+    store: `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Store is Chedi-only. store_item_added_to_cart fires with item name + price. "You may also like" on product detail is not yet tracked.</div>`,
   };
 
   body.innerHTML = (NOTES[dept] || '') + funnelHTML + interactionsHTML;
