@@ -4706,30 +4706,63 @@ function aaRenderDeptBody(dept, rows, cfg) {
     }
   }
 
-  // ── All interactions — scrollable ─────────────────────────────────────────
+  // ── All interactions — grouped by label, expandable ──────────────────────
   const labelKey = rows[0]['customEvent:label'] !== undefined ? 'customEvent:label' : 'label';
   const valueKey = rows[0]['customEvent:value'] !== undefined ? 'customEvent:value' : 'value';
   const eventKey = rows[0].eventName !== undefined ? 'eventName' : null;
-  const maxCount2 = rows[0]?.eventCount || 1;
-  const total = rows.reduce((a, r) => a + r.eventCount, 0);
+
+  // Group rows by label (or eventName for dedicated events)
+  const groups = {};
+  rows.forEach(r => {
+    const evtName = eventKey ? r[eventKey] : '';
+    const isSpecial = evtName && evtName !== 'click_event';
+    const groupKey = isSpecial ? evtName : (r[labelKey] || evtName || '—');
+    if (!groups[groupKey]) groups[groupKey] = { total: 0, isSpecial, evtName, items: [] };
+    groups[groupKey].total += r.eventCount;
+    const val = r[valueKey] || '';
+    if (val && val !== groupKey) groups[groupKey].items.push({ val, count: r.eventCount });
+  });
+
+  // Sort groups by total desc
+  const sortedGroups = Object.entries(groups).sort((a, b) => b[1].total - a[1].total);
+  const grandTotal = sortedGroups.reduce((a, [, g]) => a + g.total, 0);
+  const maxGroupCount = sortedGroups[0]?.[1].total || 1;
+  const deptId = dept; // for unique IDs
 
   const interactionsHTML = `
-    <div class="sec-lbl" style="margin-bottom:10px">All interactions · ${rows.length} event types · ${total.toLocaleString()} total taps</div>
-    <div style="max-height:320px;overflow-y:auto;padding-right:4px">
-      ${rows.map(r => {
-        const evtName = eventKey ? r[eventKey] : '';
-        const isSpecial = evtName && evtName !== 'click_event';
-        const label = r[labelKey] || evtName || '—';
-        const value = r[valueKey] || '';
-        const pct = Math.round(r.eventCount / total * 100);
-        return `<div class="fu-bar-row">
-          <div class="fu-bar-label" title="${label}${value?' · '+value:''}">
-            ${isSpecial ? `<span style="font-size:8px;background:var(--blue-l);color:var(--blue-d);padding:1px 5px;border-radius:8px;margin-right:4px">${evtName}</span>` : ''}
-            ${label}${value ? ` <span style="color:var(--text3);font-size:9px">· ${value.slice(0,28)}${value.length>28?'...':''}</span>` : ''}
+    <div class="sec-lbl" style="margin-bottom:10px">${sortedGroups.length} interaction types · ${grandTotal.toLocaleString()} total taps · click any row to expand</div>
+    <div style="max-height:380px;overflow-y:auto;padding-right:4px">
+      ${sortedGroups.map(([groupKey, g], idx) => {
+        const pct = Math.round(g.total / grandTotal * 100);
+        const hasItems = g.items.length > 0;
+        const uid = `${deptId}-${idx}`;
+        // Sort sub-items by count
+        const subItems = [...g.items].sort((a, b) => b.count - a.count);
+        const subMax = subItems[0]?.count || 1;
+
+        return `<div>
+          <div class="fu-bar-row aa-group-row" onclick="aaToggleGroup('${uid}')" style="cursor:${hasItems?'pointer':'default'};padding:6px 0">
+            <div class="fu-bar-label" style="display:flex;align-items:center;gap:6px">
+              ${g.isSpecial ? `<span style="font-size:8px;background:var(--blue-l);color:var(--blue-d);padding:1px 5px;border-radius:8px;flex-shrink:0">${g.evtName}</span>` : ''}
+              <span style="font-weight:500">${groupKey}</span>
+              ${hasItems ? `<svg id="aa-chev-${uid}" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;transition:transform .15s"><path d="M4 6l4 4 4-4"/></svg>` : ''}
+            </div>
+            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(g.total/maxGroupCount*100)}%;background:${g.isSpecial?'var(--blue)':'var(--teal)'}"></div></div>
+            <div class="fu-bar-val">${g.total.toLocaleString()}</div>
+            <div class="fu-bar-pct">${pct}%</div>
           </div>
-          <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(r.eventCount/maxCount2*100)}%;background:${isSpecial?'var(--blue)':'var(--teal)'}"></div></div>
-          <div class="fu-bar-val">${r.eventCount.toLocaleString()}</div>
-          <div class="fu-bar-pct">${pct}%</div>
+          ${hasItems ? `<div id="aa-sub-${uid}" style="display:none;padding:4px 0 8px 16px;border-left:2px solid var(--border);margin-left:8px;margin-bottom:4px">
+            ${subItems.slice(0, 20).map(item => {
+              const subPct = Math.round(item.count / g.total * 100);
+              return `<div class="fu-bar-row" style="padding:3px 0">
+                <div class="fu-bar-label" style="font-size:10px;color:var(--text2)">${item.val.slice(0,32)}${item.val.length>32?'...':''}</div>
+                <div class="fu-bar-track" style="height:5px"><div class="fu-bar-fill" style="width:${Math.round(item.count/subMax*100)}%;background:var(--teal);opacity:.7;height:5px"></div></div>
+                <div class="fu-bar-val" style="font-size:10px">${item.count.toLocaleString()}</div>
+                <div class="fu-bar-pct" style="font-size:9px">${subPct}%</div>
+              </div>`;
+            }).join('')}
+            ${subItems.length > 20 ? `<div style="font-size:9px;color:var(--text3);padding:4px 0">+${subItems.length-20} more values</div>` : ''}
+          </div>` : ''}
         </div>`;
       }).join('')}
     </div>`;
@@ -4744,6 +4777,15 @@ function aaRenderDeptBody(dept, rows, cfg) {
   };
 
   body.innerHTML = (NOTES[dept] || '') + funnelHTML + interactionsHTML;
+}
+
+function aaToggleGroup(uid) {
+  const sub = document.getElementById(`aa-sub-${uid}`);
+  const chev = document.getElementById(`aa-chev-${uid}`);
+  if (!sub) return;
+  const isOpen = sub.style.display !== 'none';
+  sub.style.display = isOpen ? 'none' : 'block';
+  if (chev) chev.style.transform = isOpen ? '' : 'rotate(180deg)';
 }
 
 /* ══════════════════════════════════════════════════════════
