@@ -682,22 +682,22 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
       </div>
       <div class="fu-gap-body" id="fu-gap-body">
         <div style="margin-top:14px"><div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>Event</th><th>Screen</th><th>Status</th><th>What's missing</th><th>Priority</th></tr></thead>
+          <thead><tr><th>Event / Screen</th><th>Dept</th><th>Status</th><th>What's missing / note</th><th>Priority</th></tr></thead>
           <tbody>
-            <tr><td>source_module on booking events</td><td>All</td><td><span class="pill pr">❌ Missing</span></td><td>Dept not passed — funnel can't break by dept</td><td><span class="pill pr">High</span></td></tr>
-            <tr><td>recommendation_impression</td><td>Cart</td><td><span class="pill pr">❌ Priority</span></td><td>No impression tracking on rec carousel</td><td><span class="pill pr">High</span></td></tr>
-            <tr><td>recommendation_added_to_cart</td><td>Cart</td><td><span class="pill pr">❌ Priority</span></td><td>Tap tracked, add-to-cart not distinct</td><td><span class="pill pr">High</span></td></tr>
-            <tr><td>chat interactions</td><td>/chat</td><td><span class="pill pr">❌ Missing</span></td><td>8,838 screen views but zero click tracking inside chat</td><td><span class="pill pr">High</span></td></tr>
-            <tr><td>cart_view</td><td>Cart</td><td><span class="pill pa">🟡 Partial</span></td><td>No GA event with item_count/cart_total</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>cart_request_tap → cart_total</td><td>Cart</td><td><span class="pill pa">🟡 Partial</span></td><td>Tap fires, cart_total/item_count missing</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>order_complete → order_id</td><td>Confirmation</td><td><span class="pill pa">🟡 Partial</span></td><td>Fires on cart not confirmation</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>activity mood picker</td><td>/activity</td><td><span class="pill pr">❌ Missing</span></td><td">"Genie, Find my Perfect Experience" swipe — no events</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>housekeeping chip taps</td><td>Home</td><td><span class="pill pr">❌ Missing</span></td><td>Quick action chips open chat — no dedicated HK event</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>spa mood filter / treatment select</td><td>/spa</td><td><span class="pill pr">❌ Missing</span></td><td>SPA closed Jun 1 — instrument before Oct 15 reopening</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>spotlight_tap → card_position</td><td>Home</td><td><span class="pill pa">🟡 Partial</span></td><td>Tap fires, position index missing</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>item_view → item_id, price</td><td>IRD</td><td><span class="pill pa">🟡 Partial</span></td><td>item_name ✓ · item_id + price missing</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>item_add_to_cart → price, qty</td><td>IRD</td><td><span class="pill pa">🟡 Partial</span></td><td>item_name ✓ · price + qty missing</td><td><span class="pill pg">Low</span></td></tr>
-            <tr><td>special_request_tap</td><td>Cart</td><td><span class="pill pr">❌ Missing</span></td><td>Special Requests button — no event</td><td><span class="pill pg">Low</span></td></tr>
+            <tr><td>Reels screen</td><td>Global</td><td><span class="pill pr">❌ Zero</span></td><td>No play/skip/complete/share — completely blind</td><td><span class="pill pr">High</span></td></tr>
+            <tr><td>Active Requests screen</td><td>Global</td><td><span class="pill pr">❌ Zero</span></td><td>12+ views in realtime, zero interaction tracking</td><td><span class="pill pr">High</span></td></tr>
+            <tr><td>Order History screen</td><td>Global</td><td><span class="pill pr">❌ Zero</span></td><td>Re-order flow untracked</td><td><span class="pill pr">High</span></td></tr>
+            <tr><td>recommendation_impression</td><td>IRD Cart</td><td><span class="pill pr">❌ Missing</span></td><td>Can't calculate carousel tap rate without impressions</td><td><span class="pill pr">High</span></td></tr>
+            <tr><td>recommendation_added_to_cart</td><td>IRD Cart</td><td><span class="pill pr">❌ Missing</span></td><td>Tap tracked, distinct add-to-cart event missing</td><td><span class="pill pr">High</span></td></tr>
+            <tr><td>source_module on booking events</td><td>All</td><td><span class="pill pr">❌ Missing</span></td><td>(not set) for most booking events — funnel can't split by dept</td><td><span class="pill pr">High</span></td></tr>
+            <tr><td>Activity mood picker swipes</td><td>Activity</td><td><span class="pill pr">❌ Missing</span></td><td>"Genie, Find my Perfect Experience" — no swipe/card events</td><td><span class="pill pa">Medium</span></td></tr>
+            <tr><td>SPA mood/treatment instrumentation</td><td>SPA</td><td><span class="pill pa">🟡 Partial</span></td><td>BMS Spa has events; non-BMS has some. SPA closed until Oct 15 — instrument before reopening</td><td><span class="pill pa">Medium</span></td></tr>
+            <tr><td>cart_view (real GA event)</td><td>IRD Cart</td><td><span class="pill pa">🟡 Partial</span></td><td>Sets abandon step only, no item_count/cart_total</td><td><span class="pill pa">Medium</span></td></tr>
+            <tr><td>order_complete → order_id, cart_total</td><td>IRD Cart</td><td><span class="pill pa">🟡 Partial</span></td><td>Fires on cart not confirmation; missing order_id</td><td><span class="pill pa">Medium</span></td></tr>
+            <tr><td>Laundry order total</td><td>Laundry</td><td><span class="pill pa">🟡 Known bug</span></td><td>order event fires but total always = 0 (app-level bug)</td><td><span class="pill pa">Medium</span></td></tr>
+            <tr><td>item_view → item_id, price</td><td>IRD Menu</td><td><span class="pill pa">🟡 Partial</span></td><td>item_name ✓ · item_id + price missing</td><td><span class="pill pg">Low</span></td></tr>
+            <tr><td>Onboarding Chat screen</td><td>Auth</td><td><span class="pill pr">❌ Missing</span></td><td>Preferences captured via chat API but no GA events</td><td><span class="pill pg">Low</span></td></tr>
+            <tr><td>Profile Selection screen</td><td>Auth</td><td><span class="pill pr">❌ Missing</span></td><td>Transitional screen with no tracking</td><td><span class="pill pg">Low</span></td></tr>
           </tbody>
         </table></div></div>
       </div>
@@ -3899,19 +3899,25 @@ let fuScreenData = []; // all screen_view data
 
 // Screen metadata — maps GA4 screen path to friendly name + dept
 const SCREEN_META = {
-  '/home':                  { name: 'Home',               icon: '🏠', dept: 'home' },
-  '/fullmenu':              { name: 'IRD Full Menu',       icon: '🍽️', dept: 'dining' },
-  '/cart':                  { name: 'IRD Cart',            icon: '🛒', dept: 'dining' },
-  '/activity':              { name: 'Activity Picker',     icon: '🎯', dept: 'activity' },
-  '/activity/categories':   { name: 'Activity List',       icon: '📋', dept: 'activity' },
-  '/activity/booking':      { name: 'Activity Booking',    icon: '📅', dept: 'activity' },
-  '/restaurant':            { name: 'Restaurant',          icon: '🍴', dept: 'restaurant' },
-  '/restaurant/booking':    { name: 'Restaurant Booking',  icon: '📅', dept: 'restaurant' },
-  '/chat':                  { name: 'Genie AI Chat',       icon: '💬', dept: 'chat' },
-  '/requests':              { name: 'My Requests',         icon: '📝', dept: 'other' },
-  '/confirmation':          { name: 'Confirmation',        icon: '✅', dept: 'other' },
-  '/':                      { name: 'Splash / Root',       icon: '⚡', dept: 'other' },
-  '/LoadingScreen':         { name: 'Loading Screen',      icon: '⏳', dept: 'other' },
+  '/home':                  { name: 'Home',               icon: '🏠', dept: 'home',        report: 'home' },
+  '/fullmenu':              { name: 'IRD Full Menu',       icon: '🍽️', dept: 'dining',      report: 'ird_menu' },
+  '/cart':                  { name: 'IRD Cart',            icon: '🛒', dept: 'dining',      report: 'cart' },
+  '/activity':              { name: 'Activity Picker',     icon: '🎯', dept: 'activity',    report: 'activity' },
+  '/activity/categories':   { name: 'Activity List',       icon: '📋', dept: 'activity',    report: 'activity' },
+  '/activity/booking':      { name: 'Activity Booking',    icon: '📅', dept: 'activity',    report: 'activity' },
+  '/restaurant':            { name: 'Restaurant',          icon: '🍴', dept: 'restaurant',  report: 'restaurant' },
+  '/restaurant/booking':    { name: 'Restaurant Booking',  icon: '📅', dept: 'restaurant',  report: 'restaurant' },
+  '/chat':                  { name: 'Genie AI Chat',       icon: '💬', dept: 'chat',        report: 'chat' },
+  '/spa':                   { name: 'SPA',                 icon: '💆', dept: 'spa',         report: 'spa' },
+  '/spa/booking':           { name: 'SPA Booking',         icon: '📅', dept: 'spa',         report: 'spa' },
+  '/taxi':                  { name: 'Taxi',                icon: '🚗', dept: 'taxi',        report: 'taxi' },
+  '/housekeeping':          { name: 'Housekeeping',        icon: '🛎️', dept: 'housekeeping', report: 'housekeeping' },
+  '/laundry':               { name: 'Laundry',             icon: '👕', dept: 'housekeeping', report: 'housekeeping' },
+  '/store':                 { name: 'Store',               icon: '🛍️', dept: 'store',       report: 'store' },
+  '/requests':              { name: 'My Requests',         icon: '📝', dept: 'other',       report: null },
+  '/confirmation':          { name: 'Confirmation',        icon: '✅', dept: 'other',       report: null },
+  '/':                      { name: 'Splash / Root',       icon: '⚡', dept: 'other',       report: null },
+  '/LoadingScreen':         { name: 'Loading Screen',      icon: '⏳', dept: 'other',       report: null },
 };
 
 function fuSetRange(el) {
@@ -4055,68 +4061,106 @@ function fuRenderScreenList(rows) {
   }).join('');
 }
 
-function fuSelectScreen(screen, views, engagementTotal) {
+async function fuSelectScreen(screen, views, engagementTotal) {
   // Highlight selected
   document.querySelectorAll('.fu-screen-item > div').forEach(el => el.style.background = '');
   const selected = document.querySelector(`.fu-screen-item[data-screen="${CSS.escape(screen)}"] > div`);
   if (selected) selected.style.background = 'var(--teal-l)';
 
-  const meta = SCREEN_META[screen] || { name: screen, icon: '📱' };
+  const meta = SCREEN_META[screen] || { name: screen, icon: '📱', report: null };
   const avgTime = views > 0 && engagementTotal > 0 ? Math.round(engagementTotal / views) : 0;
 
   document.getElementById('fu-screen-title').textContent = `${meta.icon} ${meta.name}`;
   document.getElementById('fu-screen-sub').textContent = `${views.toLocaleString()} screen views · ${avgTime > 0 ? avgTime + 's avg time' : 'no time data'}`;
   document.getElementById('fu-screen-badge').textContent = screen;
 
-  // Get click_events for this screen
-  const screenClicks = fuClickData.filter(r => {
-    const src = r['customEvent:source_screen'] || '';
-    const mod = r['customEvent:source_module'] || '';
-    // Match by screen path patterns
-    if (screen === '/home') return mod === 'home';
-    if (screen === '/fullmenu') return src === 'index' && mod === 'dining';
-    if (screen === '/cart') return src === 'cart';
-    if (screen === '/activity' || screen === '/activity/categories') return mod === 'activity';
-    if (screen === '/activity/booking') return src === 'booking' && mod === 'activity';
-    if (screen === '/restaurant') return mod === 'restaurant';
-    if (screen === '/chat') return src === 'chat' || mod === 'chat';
-    if (screen === '/confirmation') return src === 'confirmation';
-    return false;
-  }).sort((a, b) => b.eventCount - a.eventCount);
-
   const detail = document.getElementById('fu-screen-detail');
 
-  if (screen === '/chat') {
-    detail.innerHTML = `
-      <div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:14px;font-size:11px;color:var(--amber-d);line-height:1.6">
-        <strong>⚠ Genie AI Chat is the 4th most visited screen</strong> with ${views.toLocaleString()} views — but has <strong>zero click tracking</strong> inside it. You can see guests arrive but nothing about what they ask, order, or do. This is your biggest analytics blind spot. Add <code>click_event</code> tracking to: message send, quick reply chip taps, and any booking action initiated from chat.
-      </div>
-      <div style="font-size:11px;color:var(--text3)">No interaction data available — instrumentation required.</div>`;
+  // Special handling for screens with no/partial tracking
+  const ZERO_ANALYTICS = ['/requests', '/reels', '/orderhistory'];
+  if (ZERO_ANALYTICS.includes(screen)) {
+    detail.innerHTML = `<div style="background:var(--red-l);border:1px solid var(--red);border-radius:var(--radius-sm);padding:12px 14px;font-size:11px;color:var(--red-d);line-height:1.6">
+      <strong>❌ Zero analytics on this screen.</strong> The screen receives traffic but fires no events. This is a blind spot — add at minimum a <code>booking_view</code> or <code>click_event</code> on entry.
+    </div>`;
     return;
+  }
+
+  detail.innerHTML = '<div class="fu-loading"><div class="fu-spinner"></div>Loading interactions...</div>';
+
+  // Fetch dept-specific report if available, otherwise use cached click_events
+  let screenClicks = [];
+  if (meta.report) {
+    try {
+      const deptData = await fuFetch(meta.report);
+      const deptRows = fuRows(deptData);
+      // Filter to relevant rows — use label/eventName columns
+      screenClicks = deptRows
+        .filter(r => r.eventCount > 0)
+        .sort((a, b) => b.eventCount - a.eventCount);
+    } catch(e) {
+      console.warn('Dept report failed, falling back to click_events:', e);
+    }
+  }
+
+  // Fallback: filter from cached click_events
+  if (!screenClicks.length) {
+    screenClicks = fuClickData.filter(r => {
+      const src = r['customEvent:source_screen'] || '';
+      const mod = r['customEvent:source_module'] || '';
+      if (screen === '/home') return mod === 'home';
+      if (screen === '/fullmenu') return mod === 'dining';
+      if (screen === '/cart') return src === 'cart';
+      if (screen === '/activity' || screen === '/activity/categories' || screen === '/activity/booking') return mod === 'activity';
+      if (screen === '/restaurant' || screen === '/restaurant/booking') return mod === 'restaurant';
+      if (screen === '/chat') return src === 'chat';
+      if (screen === '/spa' || screen === '/spa/booking') return mod === 'spa' || mod === 'bms_spa';
+      if (screen === '/taxi') return mod === 'taxi';
+      if (screen === '/housekeeping' || screen === '/laundry') return mod === 'housekeeping' || mod === 'laundry';
+      if (screen === '/store') return mod === 'store';
+      return false;
+    }).sort((a, b) => b.eventCount - a.eventCount);
   }
 
   if (!screenClicks.length) {
-    detail.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:40px 0;text-align:center">No click_event data for this screen in the selected period.<br><span style="font-size:9px;margin-top:6px;display:block">This may mean source_module/source_screen isn't being passed for this screen.</span></div>`;
+    detail.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:40px 0;text-align:center">No interaction data for this screen in the selected period.<br><span style="font-size:9px;margin-top:4px;display:block">source_module may not be passed consistently for this screen.</span></div>`;
     return;
   }
+
+  const labelKey = screenClicks[0]['customEvent:label'] !== undefined ? 'customEvent:label' : 'label';
+  const valueKey = screenClicks[0]['customEvent:value'] !== undefined ? 'customEvent:value' : 'value';
+  const eventKey = screenClicks[0]['eventName'] !== undefined ? 'eventName' : null;
 
   const maxCount = screenClicks[0].eventCount;
   const total = screenClicks.reduce((a, r) => a + r.eventCount, 0);
 
+  // Department-specific context note
+  const DEPT_NOTES = {
+    'chat': `<div style="background:var(--teal-l);border:1px solid var(--teal);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--teal-d)">Chat has 4 tracked interactions: back/home navigation, suggested prompt taps (with text), and message sends (with text). This tells you what guests type and which prompts they use.</div>`,
+    'taxi': `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Taxi has dedicated events: <code>taxi_time_selected</code> and <code>taxi_vehicle_selected</code> — richer than just booking_complete.</div>`,
+    'housekeeping': `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Housekeeping fires an <code>order</code> event with total value when a request is placed. Laundry order total is always 0 (app bug — not our dashboard).</div>`,
+  };
+  const noteHTML = DEPT_NOTES[meta.dept] || '';
+
   detail.innerHTML = `
-    <div class="sec-lbl" style="margin-bottom:12px">Interactions on this screen · ${screenClicks.length} event types · ${total.toLocaleString()} total taps</div>
+    ${noteHTML}
+    <div class="sec-lbl" style="margin-bottom:12px">${screenClicks.length} interaction types · ${total.toLocaleString()} total events</div>
     ${screenClicks.slice(0, 15).map(r => {
-      const label = r['customEvent:label'] || '—';
-      const value = r['customEvent:value'] || '';
+      const evtName = eventKey ? (r[eventKey] || '') : '';
+      const label = r[labelKey] || evtName || '—';
+      const value = r[valueKey] || '';
       const pct = Math.round(r.eventCount / total * 100);
+      const isSpecialEvent = evtName && evtName !== 'click_event';
       return `<div class="fu-bar-row">
-        <div class="fu-bar-label" title="${label}${value?' · '+value:''}">${label}${value?` <span style="color:var(--text3);font-size:9px">· ${value}</span>`:''}</div>
-        <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(r.eventCount/maxCount*100)}%;background:var(--teal)"></div></div>
+        <div class="fu-bar-label" title="${label}${value?' · '+value:''}">
+          ${isSpecialEvent ? `<span style="font-size:8px;background:var(--blue-l);color:var(--blue-d);padding:1px 5px;border-radius:8px;margin-right:4px">${evtName}</span>` : ''}
+          ${label}${value ? ` <span style="color:var(--text3);font-size:9px">· ${value.slice(0,30)}${value.length>30?'...':''}</span>` : ''}
+        </div>
+        <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(r.eventCount/maxCount*100)}%;background:${isSpecialEvent?'var(--blue)':'var(--teal)'}"></div></div>
         <div class="fu-bar-val">${r.eventCount.toLocaleString()}</div>
         <div class="fu-bar-pct">${pct}%</div>
       </div>`;
     }).join('')}
-    ${screenClicks.length > 15 ? `<div style="font-size:10px;color:var(--text3);margin-top:8px">+${screenClicks.length - 15} more event types</div>` : ''}`;
+    ${screenClicks.length > 15 ? `<div style="font-size:10px;color:var(--text3);margin-top:8px">+${screenClicks.length - 15} more</div>` : ''}`;
 }
 
 function fuRenderFunnel(data) {
