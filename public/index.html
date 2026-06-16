@@ -226,7 +226,29 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
 .fu-insight-row:last-child{margin-bottom:0}
 .fu-insight-row.warn{border-left-color:var(--amber)}
 .fu-insight-row.alert{border-left-color:var(--red)}
-.kb-filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+/* ── APP ANALYTICS DEPT CARDS ── */
+.aa-dept-card{transition:all .15s}
+.aa-dept-head{display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none}
+.aa-chevron{transition:transform .2s;flex-shrink:0}
+.aa-chevron.open{transform:rotate(180deg)}
+.aa-dept-body{animation:fadeIn .2s ease}
+.aa-health{font-size:9px;padding:2px 8px;border-radius:10px;font-weight:500}
+.aa-health-good{background:var(--teal-l);color:var(--teal-d)}
+.aa-health-warn{background:var(--amber-l);color:var(--amber-d)}
+.aa-health-bad{background:var(--red-l);color:var(--red-d)}
+.aa-health-na{background:var(--bg2);color:var(--text3)}
+.aa-screen-tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:14px;flex-wrap:wrap}
+.aa-screen-tab{font-size:10px;padding:7px 12px;border:none;background:transparent;color:var(--text2);cursor:pointer;font-family:var(--sans);border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .15s;white-space:nowrap}
+.aa-screen-tab:hover{color:var(--text)}
+.aa-screen-tab.on{color:var(--text);font-weight:500;border-bottom-color:var(--teal)}
+.aa-screen-panel{display:none}.aa-screen-panel.on{display:block}
+.aa-stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+.aa-stat{background:var(--bg);border-radius:var(--radius-sm);padding:10px 12px}
+.aa-stat-label{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:4px}
+.aa-stat-val{font-family:var(--serif);font-size:20px;letter-spacing:-.5px}
+.aa-stat-sub{font-size:9px;color:var(--text3);margin-top:2px}
+
+/* ── KANBAN BOARD ── */
 .kb-chip{font-size:10px;padding:5px 14px;border:1px solid var(--border);border-radius:20px;cursor:pointer;background:transparent;color:var(--text2);font-family:var(--sans);transition:all .12s;user-select:none}
 .kb-chip:hover{background:var(--bg2);color:var(--text)}
 .kb-chip.on{background:var(--text);color:var(--bg);border-color:var(--text)}
@@ -370,10 +392,7 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><polyline points="2,12 6,7 10,9 14,3"/></svg>MoM Trends
     </button>
     <button class="nav-item" onclick="go('ga',this)">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 2"/></svg>GA Analytics
-    </button>
-    <button class="nav-item" onclick="go('features',this)">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M2 12V6l6-4 6 4v6"/><path d="M6 16v-5h4v5"/><rect x="6" y="7" width="4" height="3" rx=".5"/></svg>Feature Usage
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 2"/></svg>App Analytics
     </button>
     <button class="nav-item" onclick="go('dept',this)">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M1 5h14M1 9h14M1 13h14"/></svg>Dept Metrics
@@ -618,90 +637,243 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
 
 <!-- ══ FEEDBACK ══ -->
 
-<!-- ══ FEATURE USAGE ══ -->
-<div class="page" id="p-features">
+<!-- ══ APP ANALYTICS ══ -->
+<div class="page" id="p-ga">
   <div class="topbar">
     <div>
-      <div class="tb-title">Feature Usage</div>
-      <div class="tb-sub" id="fu-sub">Live from GA4 · orascom-ohm1 · property 503373961</div>
+      <div class="tb-title">App Analytics</div>
+      <div class="tb-sub" id="aa-sub">Live from GA4 · orascom-ohm1 · data reflects last 24–48h</div>
     </div>
     <div class="tb-right">
-      <span class="fu-status fu-warn" id="fu-api-status">⟳ Not loaded</span>
-      <button class="btn" onclick="fuLoad(true)">↻ Refresh</button>
+      <span class="fu-status fu-warn" id="aa-status">⟳ Not loaded</span>
+      <button class="btn" onclick="aaLoad(true)">↻ Refresh</button>
     </div>
   </div>
-  <div class="fu-range-bar">
+
+  <!-- Period + Hotel filter bar -->
+  <div class="fu-range-bar" style="gap:16px">
     <span style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3)">Period</span>
-    <button class="fu-range-chip on" data-start="7daysAgo" data-end="today" onclick="fuSetRange(this)">7 days</button>
-    <button class="fu-range-chip" data-start="30daysAgo" data-end="today" onclick="fuSetRange(this)">30 days</button>
-    <button class="fu-range-chip" data-start="90daysAgo" data-end="today" onclick="fuSetRange(this)">90 days</button>
-    <span style="margin-left:auto;font-size:10px;color:var(--text3)" id="fu-last-updated"></span>
+    <button class="fu-range-chip on" data-start="7daysAgo" data-end="today" onclick="aaSetRange(this)">7 days</button>
+    <button class="fu-range-chip" data-start="30daysAgo" data-end="today" onclick="aaSetRange(this)">30 days</button>
+    <button class="fu-range-chip" data-start="90daysAgo" data-end="today" onclick="aaSetRange(this)">90 days</button>
+    <div style="width:1px;height:20px;background:var(--border)"></div>
+    <span style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3)">Hotel</span>
+    <select id="aa-hotel-filter" onchange="aaSetHotel(this.value)" style="font-size:10px;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-family:var(--sans)">
+      <option value="">All hotels</option>
+      <option value="d2696857">Cook's Club</option>
+      <option value="3e84b99c">Casa Cook</option>
+      <option value="e9eebb84">Steigenberger</option>
+      <option value="1aed1dad">The Chedi</option>
+      <option value="47e4d6e0">Ancient Sands</option>
+      <option value="ef496b6f">Sultan Bey</option>
+      <option value="531d814d">Mosaique</option>
+      <option value="e910cccd">Captain's Inn</option>
+      <option value="8d07caa9">Ali Pasha</option>
+      <option value="6c24b105">Fanadir</option>
+      <option value="9f06c608">Turtle's Inn</option>
+    </select>
+    <span style="margin-left:auto;font-size:10px;color:var(--text3)" id="aa-updated"></span>
   </div>
+
   <div class="scroll">
-    <div class="kpi-row kpi-r4" id="fu-kpis"></div>
-    <!-- Screen navigator -->
-    <div style="display:grid;grid-template-columns:200px 1fr;gap:16px;margin-bottom:16px">
-      <div class="card" style="padding:0;overflow:hidden;align-self:start">
-        <div style="padding:12px 14px;border-bottom:1px solid var(--border);font-size:11px;font-weight:500">App screens</div>
-        <div id="fu-screen-list"><div class="fu-loading" style="padding:16px 14px"><div class="fu-spinner"></div>Loading...</div></div>
-      </div>
-      <div class="card" style="padding:0;overflow:hidden">
-        <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
-          <div><div class="card-title" id="fu-screen-title">Select a screen</div><div class="card-sub" id="fu-screen-sub">Click any screen on the left</div></div>
-          <span id="fu-screen-badge" style="font-size:10px;color:var(--text3)"></span>
-        </div>
-        <div style="padding:16px;min-height:300px" id="fu-screen-detail">
-          <div style="font-size:11px;color:var(--text3);padding:60px 0;text-align:center">Select a screen to see what guests tapped</div>
-        </div>
-      </div>
-    </div>
-    <!-- Booking funnel -->
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-head"><div><div class="card-title">Booking funnel</div><div class="card-sub">Start → Complete · <span style="color:var(--amber)">dept breakdown pending source_module fix</span></div></div></div>
-      <div id="fu-funnel-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading from GA4...</div></div>
-    </div>
-    <!-- AI Insights -->
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-head"><div><span class="ai-pip" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--teal);animation:pulse 2s infinite;margin-right:8px"></span><span class="card-title">AI insights</span></div></div>
-      <div id="fu-insights-body" style="padding:4px 0"><div class="fu-loading"><div class="fu-spinner"></div>Analysing...</div></div>
-    </div>
-    <!-- Recommendations -->
+
+    <!-- Section 1: Leadership KPIs -->
+    <div class="kpi-row kpi-r4" id="aa-kpis" style="margin-bottom:16px"></div>
+
+    <!-- Booking funnel hero -->
     <div class="card" style="margin-bottom:16px">
       <div class="card-head">
-        <div><div class="card-title">Recommendation carousel · "Add some more delicacies"</div><div class="card-sub">IRD cart · add_suggested_item taps</div></div>
-        <span class="fu-status fu-warn">⚠ Impression missing</span>
+        <div><div class="card-title">Booking funnel</div><div class="card-sub" id="aa-funnel-sub">All departments · Start → Complete</div></div>
       </div>
-      <div class="fu-rec-callout"><strong>Can't calculate tap rate</strong> — impression tracking not implemented. <code>recommendation_impression</code> is the priority fix.</div>
-      <div id="fu-rec-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
+      <div id="aa-funnel-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
     </div>
-    <!-- Gap tracker -->
+
+    <!-- Section 2: Department cards -->
+    <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px">By department</div>
+
+    <!-- IRD -->
+    <div class="aa-dept-card card" id="aa-dept-ird" style="margin-bottom:10px">
+      <div class="aa-dept-head" onclick="aaToggleDept('ird')">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:18px">🍽️</span>
+          <div><div style="font-size:12px;font-weight:500">In-Room Dining</div><div class="card-sub">IRD menu · Cart · Recommendations</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="aa-pill-ird"></div>
+          <svg class="aa-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
+        </div>
+      </div>
+      <div class="aa-dept-body" id="aa-body-ird" style="display:none;padding-top:14px;border-top:1px solid var(--border);margin-top:12px">
+        <div class="fu-loading"><div class="fu-spinner"></div>Loading IRD data...</div>
+      </div>
+    </div>
+
+    <!-- Activity -->
+    <div class="aa-dept-card card" id="aa-dept-activity" style="margin-bottom:10px">
+      <div class="aa-dept-head" onclick="aaToggleDept('activity')">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:18px">🎯</span>
+          <div><div style="font-size:12px;font-weight:500">Activity</div><div class="card-sub">Picker · List · Booking flow</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="aa-pill-activity"></div>
+          <svg class="aa-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
+        </div>
+      </div>
+      <div class="aa-dept-body" id="aa-body-activity" style="display:none;padding-top:14px;border-top:1px solid var(--border);margin-top:12px">
+        <div class="fu-loading"><div class="fu-spinner"></div>Loading Activity data...</div>
+      </div>
+    </div>
+
+    <!-- SPA -->
+    <div class="aa-dept-card card" id="aa-dept-spa" style="margin-bottom:10px">
+      <div class="aa-dept-head" onclick="aaToggleDept('spa')">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:18px">💆</span>
+          <div><div style="font-size:12px;font-weight:500">SPA</div><div class="card-sub">All hotels · BMS SPA (Chedi only) · Closed until Oct 15</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="aa-pill-spa"></div>
+          <svg class="aa-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
+        </div>
+      </div>
+      <div class="aa-dept-body" id="aa-body-spa" style="display:none;padding-top:14px;border-top:1px solid var(--border);margin-top:12px">
+        <div class="fu-loading"><div class="fu-spinner"></div>Loading SPA data...</div>
+      </div>
+    </div>
+
+    <!-- Restaurant -->
+    <div class="aa-dept-card card" id="aa-dept-restaurant" style="margin-bottom:10px">
+      <div class="aa-dept-head" onclick="aaToggleDept('restaurant')">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:18px">🍴</span>
+          <div><div style="font-size:12px;font-weight:500">Restaurant</div><div class="card-sub">Landing · Booking flow · Reservations</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="aa-pill-restaurant"></div>
+          <svg class="aa-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
+        </div>
+      </div>
+      <div class="aa-dept-body" id="aa-body-restaurant" style="display:none;padding-top:14px;border-top:1px solid var(--border);margin-top:12px">
+        <div class="fu-loading"><div class="fu-spinner"></div>Loading Restaurant data...</div>
+      </div>
+    </div>
+
+    <!-- Taxi -->
+    <div class="aa-dept-card card" id="aa-dept-taxi" style="margin-bottom:10px">
+      <div class="aa-dept-head" onclick="aaToggleDept('taxi')">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:18px">🚗</span>
+          <div><div style="font-size:12px;font-weight:500">Taxi</div><div class="card-sub">Destination · Vehicle · Schedule · Booking</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="aa-pill-taxi"></div>
+          <svg class="aa-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
+        </div>
+      </div>
+      <div class="aa-dept-body" id="aa-body-taxi" style="display:none;padding-top:14px;border-top:1px solid var(--border);margin-top:12px">
+        <div class="fu-loading"><div class="fu-spinner"></div>Loading Taxi data...</div>
+      </div>
+    </div>
+
+    <!-- Housekeeping -->
+    <div class="aa-dept-card card" id="aa-dept-housekeeping" style="margin-bottom:10px">
+      <div class="aa-dept-head" onclick="aaToggleDept('housekeeping')">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:18px">🛎️</span>
+          <div><div style="font-size:12px;font-weight:500">Housekeeping & Laundry</div><div class="card-sub">Room requests · Laundry pickup</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="aa-pill-housekeeping"></div>
+          <svg class="aa-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
+        </div>
+      </div>
+      <div class="aa-dept-body" id="aa-body-housekeeping" style="display:none;padding-top:14px;border-top:1px solid var(--border);margin-top:12px">
+        <div class="fu-loading"><div class="fu-spinner"></div>Loading Housekeeping data...</div>
+      </div>
+    </div>
+
+    <!-- Store -->
+    <div class="aa-dept-card card" id="aa-dept-store" style="margin-bottom:10px">
+      <div class="aa-dept-head" onclick="aaToggleDept('store')">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:18px">🛍️</span>
+          <div><div style="font-size:12px;font-weight:500">Store</div><div class="card-sub">Chedi only · Browse · Product view · Add to cart</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="aa-pill-store"></div>
+          <svg class="aa-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
+        </div>
+      </div>
+      <div class="aa-dept-body" id="aa-body-store" style="display:none;padding-top:14px;border-top:1px solid var(--border);margin-top:12px">
+        <div class="fu-loading"><div class="fu-spinner"></div>Loading Store data...</div>
+      </div>
+    </div>
+
+    <!-- Genie AI Chat -->
+    <div class="aa-dept-card card" id="aa-dept-chat" style="margin-bottom:10px">
+      <div class="aa-dept-head" onclick="aaToggleDept('chat')">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:18px">💬</span>
+          <div><div style="font-size:12px;font-weight:500">Genie AI Chat</div><div class="card-sub">4th most visited screen · prompt taps · message sends</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="aa-pill-chat"></div>
+          <svg class="aa-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
+        </div>
+      </div>
+      <div class="aa-dept-body" id="aa-body-chat" style="display:none;padding-top:14px;border-top:1px solid var(--border);margin-top:12px">
+        <div class="fu-loading"><div class="fu-spinner"></div>Loading Chat data...</div>
+      </div>
+    </div>
+
+    <!-- Home screen -->
+    <div class="aa-dept-card card" id="aa-dept-home" style="margin-bottom:16px">
+      <div class="aa-dept-head" onclick="aaToggleDept('home')">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:18px">🏠</span>
+          <div><div style="font-size:12px;font-weight:500">Home Screen</div><div class="card-sub">Spotlight · Quick actions · Navigation</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="aa-pill-home"></div>
+          <svg class="aa-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
+        </div>
+      </div>
+      <div class="aa-dept-body" id="aa-body-home" style="display:none;padding-top:14px;border-top:1px solid var(--border);margin-top:12px">
+        <div class="fu-loading"><div class="fu-spinner"></div>Loading Home data...</div>
+      </div>
+    </div>
+
+    <!-- Section 3: Engineering gaps (collapsed) -->
     <div class="card last">
-      <div class="fu-gap-toggle" id="fu-gap-toggle" onclick="fuToggleGap()">
-        <div><div class="card-title">Instrumentation gap tracker</div><div class="card-sub" style="margin-top:3px">Click to expand</div></div>
+      <div class="fu-gap-toggle" id="aa-gap-toggle" onclick="aaToggleGap()">
+        <div>
+          <div class="card-title">Instrumentation gaps</div>
+          <div class="card-sub" style="margin-top:3px">For engineering · click to expand</div>
+        </div>
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
       </div>
-      <div class="fu-gap-body" id="fu-gap-body">
+      <div class="fu-gap-body" id="aa-gap-body">
         <div style="margin-top:14px"><div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>Event / Screen</th><th>Dept</th><th>Status</th><th>What's missing / note</th><th>Priority</th></tr></thead>
+          <thead><tr><th>Missing / broken</th><th>Dept</th><th>Impact</th><th>Priority</th></tr></thead>
           <tbody>
-            <tr><td>Reels screen</td><td>Global</td><td><span class="pill pr">❌ Zero</span></td><td>No play/skip/complete/share — completely blind</td><td><span class="pill pr">High</span></td></tr>
-            <tr><td>Active Requests screen</td><td>Global</td><td><span class="pill pr">❌ Zero</span></td><td>12+ views in realtime, zero interaction tracking</td><td><span class="pill pr">High</span></td></tr>
-            <tr><td>Order History screen</td><td>Global</td><td><span class="pill pr">❌ Zero</span></td><td>Re-order flow untracked</td><td><span class="pill pr">High</span></td></tr>
-            <tr><td>recommendation_impression</td><td>IRD Cart</td><td><span class="pill pr">❌ Missing</span></td><td>Can't calculate carousel tap rate without impressions</td><td><span class="pill pr">High</span></td></tr>
-            <tr><td>recommendation_added_to_cart</td><td>IRD Cart</td><td><span class="pill pr">❌ Missing</span></td><td>Tap tracked, distinct add-to-cart event missing</td><td><span class="pill pr">High</span></td></tr>
-            <tr><td>source_module on booking events</td><td>All</td><td><span class="pill pr">❌ Missing</span></td><td>(not set) for most booking events — funnel can't split by dept</td><td><span class="pill pr">High</span></td></tr>
-            <tr><td>Activity mood picker swipes</td><td>Activity</td><td><span class="pill pr">❌ Missing</span></td><td>"Genie, Find my Perfect Experience" — no swipe/card events</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>SPA mood/treatment instrumentation</td><td>SPA</td><td><span class="pill pa">🟡 Partial</span></td><td>BMS Spa has events; non-BMS has some. SPA closed until Oct 15 — instrument before reopening</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>cart_view (real GA event)</td><td>IRD Cart</td><td><span class="pill pa">🟡 Partial</span></td><td>Sets abandon step only, no item_count/cart_total</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>order_complete → order_id, cart_total</td><td>IRD Cart</td><td><span class="pill pa">🟡 Partial</span></td><td>Fires on cart not confirmation; missing order_id</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>Laundry order total</td><td>Laundry</td><td><span class="pill pa">🟡 Known bug</span></td><td>order event fires but total always = 0 (app-level bug)</td><td><span class="pill pa">Medium</span></td></tr>
-            <tr><td>item_view → item_id, price</td><td>IRD Menu</td><td><span class="pill pa">🟡 Partial</span></td><td>item_name ✓ · item_id + price missing</td><td><span class="pill pg">Low</span></td></tr>
-            <tr><td>Onboarding Chat screen</td><td>Auth</td><td><span class="pill pr">❌ Missing</span></td><td>Preferences captured via chat API but no GA events</td><td><span class="pill pg">Low</span></td></tr>
-            <tr><td>Profile Selection screen</td><td>Auth</td><td><span class="pill pr">❌ Missing</span></td><td>Transitional screen with no tracking</td><td><span class="pill pg">Low</span></td></tr>
+            <tr><td>Reels screen — zero tracking</td><td>Global</td><td>No play/skip/complete data</td><td><span class="pill pr">High</span></td></tr>
+            <tr><td>Active Requests screen — zero tracking</td><td>Global</td><td>1,000+ views, zero interactions tracked</td><td><span class="pill pr">High</span></td></tr>
+            <tr><td>Order History screen — zero tracking</td><td>Global</td><td>Re-order funnel invisible</td><td><span class="pill pr">High</span></td></tr>
+            <tr><td>recommendation_impression</td><td>IRD · Store</td><td>Can't calculate carousel effectiveness</td><td><span class="pill pr">High</span></td></tr>
+            <tr><td>recommendation_added_to_cart</td><td>IRD · Store</td><td>Tap ≠ add — conversion invisible</td><td><span class="pill pr">High</span></td></tr>
+            <tr><td>source_module on booking events</td><td>All</td><td>Can't split funnel by dept — all shows (not set)</td><td><span class="pill pr">High</span></td></tr>
+            <tr><td>Activity mood picker swipes</td><td>Activity</td><td>"Find my Perfect Experience" — no swipe events</td><td><span class="pill pa">Medium</span></td></tr>
+            <tr><td>SPA instrumentation before Oct 15</td><td>SPA</td><td>Reopen without analytics = month of blind data</td><td><span class="pill pa">Medium</span></td></tr>
+            <tr><td>cart_view with item_count + cart_total</td><td>IRD</td><td>Can't see cart abandonment value</td><td><span class="pill pa">Medium</span></td></tr>
+            <tr><td>Laundry order total always = 0</td><td>Laundry</td><td>App bug — revenue data unreliable</td><td><span class="pill pa">Medium</span></td></tr>
+            <tr><td>Store "You may also like" on product detail</td><td>Store</td><td>Second rec surface — zero tracking</td><td><span class="pill pa">Medium</span></td></tr>
+            <tr><td>Onboarding Chat — no GA events</td><td>Auth</td><td>Guest preference capture invisible</td><td><span class="pill pg">Low</span></td></tr>
           </tbody>
         </table></div></div>
       </div>
     </div>
+
   </div>
 </div>
 
@@ -830,116 +1002,6 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
       <div class="card last"><div class="card-head"><div><div class="card-title">Req/stay MoM</div><div class="card-sub">Requests per check-in · engagement intensity</div></div></div>
         <div style="position:relative;width:100%;height:200px"><canvas id="t-rps"></canvas></div></div>
     </div>
-  </div>
-</div>
-
-<!-- ══ GA ANALYTICS ══ -->
-<div class="page" id="p-ga">
-  <div class="topbar">
-    <div><div class="tb-title">GA Analytics</div><div class="tb-sub" id="ga-sub">Google Analytics · orascom-ohm1 · Mar–May 2026</div></div>
-    <div class="tb-right">
-      <button class="btn" onclick="aiQ('Analyze the Google Analytics funnel data for the Genie app. Which departments have the best and worst conversion rates? What should we prioritize to improve bookings?')">Analyze with AI</button>
-    </div>
-  </div>
-  <div style="background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;height:44px;display:flex;align-items:center;gap:12px;flex-shrink:0">
-    <span style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3)">Dept filter</span>
-    <div style="display:flex;gap:5px;flex-wrap:wrap" id="ga-dept-chips"></div>
-    <div style="margin-left:auto;font-size:10px;color:var(--text3);display:flex;align-items:center;gap:6px">
-      <span style="width:7px;height:7px;border-radius:50%;background:#1D9E75;display:inline-block"></span>
-      All GA event fixes verified ✅ May 23 2026
-    </div>
-  </div>
-  <div class="scroll">
-
-    <!-- App KPIs -->
-    <div class="sec-lbl">App performance · Mar–May 2026</div>
-    <div class="kpi-row kpi-r5">
-      <div class="kpi"><div class="kpi-label">Active users</div><div class="kpi-val">2,396</div><div class="kpi-delta dn">↓16.9% vs prev period</div></div>
-      <div class="kpi"><div class="kpi-label">New installs</div><div class="kpi-val">1,420</div><div class="kpi-delta">59.3% of active users</div></div>
-      <div class="kpi"><div class="kpi-label">App sessions</div><div class="kpi-val">31,571</div><div class="kpi-delta">23.9 sessions/user avg</div></div>
-      <div class="kpi"><div class="kpi-label">Booking views</div><div class="kpi-val" id="ga-bv">46,744</div><div class="kpi-delta">across all depts</div></div>
-      <div class="kpi"><div class="kpi-label">Bookings started</div><div class="kpi-val" id="ga-bs">11,938</div><div class="kpi-delta up" id="ga-bs-s">25.5% of viewers</div></div>
-    </div>
-    <div class="kpi-row kpi-r5">
-      <div class="kpi"><div class="kpi-label">Bookings completed</div><div class="kpi-val" id="ga-bc">1,883</div><div class="kpi-delta up" id="ga-bc-s">15.8% of starters</div></div>
-      <div class="kpi"><div class="kpi-label">Bookings abandoned</div><div class="kpi-val" id="ga-ba">—</div><div class="kpi-delta dn" id="ga-ba-s">fix deployed May 23</div></div>
-      <div class="kpi"><div class="kpi-label">Notifications sent</div><div class="kpi-val">943</div><div class="kpi-delta up">104 opened · 11%</div></div>
-      <div class="kpi"><div class="kpi-label">App crashes</div><div class="kpi-val">114</div><div class="kpi-delta dn">44 users affected</div></div>
-      <div class="kpi"><div class="kpi-label">App uninstalls</div><div class="kpi-val">216</div><div class="kpi-delta dn">8.4% of active users</div></div>
-    </div>
-
-    <!-- AI panel -->
-    <div class="ai-panel">
-      <div class="ai-head"><div class="ai-pip"></div><div class="ai-head-t">AI insights · GA data</div><div class="ai-head-s" id="ga-ai-sub">All departments · 90 days</div></div>
-      <div class="ai-body" id="ga-ai-body"></div>
-      <div class="ai-chips-wrap">
-        <button class="ai-chip" onclick="aiQ('Restaurant has 64% completion rate once guests start, but only 3.2% of viewers start. Activity has 42% completion rate and 19.6% start rate. What does this tell us and what should we prioritize?')">Compare dept conversion ↗</button>
-        <button class="ai-chip" onclick="aiQ('SPA has 6,112 booking starts but only 348 completions — a 5.7% completion rate. What are the most likely drop-off points and how do we fix them?')">SPA funnel drop-off ↗</button>
-        <button class="ai-chip" onclick="aiQ('The Genie app has 2,396 active users and 31,571 sessions, but only 1,883 completed bookings. How do we improve booking conversion across all departments?')">Improve booking conversion ↗</button>
-        <button class="ai-chip" onclick="aiQ('Which Genie app departments should we prioritize for product improvements? Use this data: spa 6,112 started 348 completed, activity 2,361 started 989 completed, restaurant 451 started 288 completed, taxi 1,050 started 138 completed.')">Feature priorities ↗</button>
-      </div>
-    </div>
-
-    <!-- Funnel charts -->
-    <div class="g2" style="margin-bottom:16px">
-      <div class="card">
-        <div class="card-head"><div><div class="card-title">Booking funnel by department</div><div class="card-sub" id="ga-funnel-sub">Views → Started → Completed · Mar–May 2026</div></div></div>
-        <div style="position:relative;width:100%;height:280px"><canvas id="ga-funnel-chart"></canvas></div>
-      </div>
-      <div class="card">
-        <div class="card-head"><div><div class="card-title">Navigation by department</div><div class="card-sub">click_event → destination_module · where guests browse</div></div></div>
-        <div style="position:relative;width:100%;height:280px"><canvas id="ga-nav-chart"></canvas></div>
-      </div>
-    </div>
-
-    <!-- Conversion rate chart -->
-    <div class="g2" style="margin-bottom:16px">
-      <div class="card">
-        <div class="card-head"><div><div class="card-title">Start rate by department</div><div class="card-sub">% of viewers who start a booking · higher is better</div></div></div>
-        <div style="position:relative;width:100%;height:220px"><canvas id="ga-start-rate-chart"></canvas></div>
-      </div>
-      <div class="card">
-        <div class="card-head"><div><div class="card-title">Completion rate by department</div><div class="card-sub">% of starters who complete · higher is better</div></div></div>
-        <div style="position:relative;width:100%;height:220px"><canvas id="ga-complete-rate-chart"></canvas></div>
-      </div>
-    </div>
-
-    <!-- Weekly trend -->
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-head"><div><div class="card-title">Weekly booking trend</div><div class="card-sub" id="ga-trend-sub">All bookings · 14-week trend</div></div></div>
-      <div style="position:relative;width:100%;height:220px"><canvas id="ga-weekly-chart"></canvas></div>
-    </div>
-
-    <!-- Dept table + app health -->
-    <div class="g2">
-      <div class="card">
-        <div class="card-head"><div><div class="card-title">Full funnel by department</div><div class="card-sub" id="ga-tbl-sub">All departments · Mar–May 2026</div></div></div>
-        <div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>Dept</th><th>Nav clicks</th><th>Views</th><th>Started</th><th>Start %</th><th>Completed</th><th>Complete %</th><th>Status</th></tr></thead>
-          <tbody id="ga-dept-tbl"></tbody>
-        </table></div>
-      </div>
-      <div class="card">
-        <div class="card-head"><div><div class="card-title">App health</div><div class="card-sub">90-day summary</div></div></div>
-        <div style="display:flex;flex-direction:column;gap:0;font-size:11px">
-          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:.5px solid var(--border)"><span style="color:var(--text2)">Total events fired</span><strong>724,638</strong></div>
-          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:.5px solid var(--border)"><span style="color:var(--text2)">Screen views</span><strong>327,926</strong></div>
-          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:.5px solid var(--border)"><span style="color:var(--text2)">Avg events / active user</span><strong>311.7</strong></div>
-          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:.5px solid var(--border)"><span style="color:var(--text2)">Notifications: sent → opened</span><strong>943 → 104 (11%)</strong></div>
-          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:.5px solid var(--border)"><span style="color:var(--text2)">App exceptions (crashes)</span><strong style="color:var(--red)">114 · 44 users</strong></div>
-          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:.5px solid var(--border)"><span style="color:var(--text2)">App uninstalls</span><strong style="color:var(--red)">216 users (8.4%)</strong></div>
-          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:.5px solid var(--border)"><span style="color:var(--text2)">Top country</span><strong>Egypt 79.3%</strong></div>
-          <div style="display:flex;justify-content:space-between;padding:8px 0"><span style="color:var(--text2)">GA event quality</span><strong style="color:var(--teal)">All 5 fixes verified ✅</strong></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Features with zero conversion -->
-    <div class="card last">
-      <div class="card-head"><div><div class="card-title">Features guests browse but never book</div><div class="card-sub">Navigated to · zero completed bookings · opportunity to improve</div></div></div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px" id="ga-zero-grid"></div>
-    </div>
-
   </div>
 </div>
 
@@ -2075,8 +2137,7 @@ function rPage(id) {
   else if(id==='kanban') rKanban();
   else if(id==='feedback') rFeedback();
   else if(id==='trends') rTrends();
-  else if(id==='ga') rGA();
-  else if(id==='features') rFeatures();
+  else if(id==='ga') aaLoad(false);
   else if(id==='dept') rDept();
   else if(id==='topitems') rTopItems();
   else if(id==='hotels') rHotels();
@@ -4258,6 +4319,318 @@ function fuRenderInsights(funnelData, recsData, screenData) {
   document.getElementById('fu-insights-body').innerHTML = insights.map(i =>
     `<div class="fu-insight-row ${i.type}">${i.text}</div>`
   ).join('');
+}
+
+/* ══════════════════════════════════════════════════════════
+   APP ANALYTICS — merged GA4 + Feature Usage
+══════════════════════════════════════════════════════════ */
+const AA_FN = '/.netlify/functions/ga4';
+let aaStartDate = '7daysAgo';
+let aaEndDate = 'today';
+let aaHotelId = '';
+let aaCache = {};
+let aaLoaded = false;
+let aaOpenDepts = new Set();
+let aaFunnelData = null;
+
+// Hotel UUID → hotel_id param mapping
+const HOTEL_IDS = {
+  'd2696857': 'cooks_club', '3e84b99c': 'casa_cook', 'e9eebb84': 'steigenberger',
+  '1aed1dad': 'the_chedi', '47e4d6e0': 'ancient_sands', 'ef496b6f': 'sultan_bey',
+  '531d814d': 'mosaique', 'e910cccd': 'captains_inn', '8d07caa9': 'ali_pasha',
+  '6c24b105': 'fanadir', '9f06c608': 'turtles_inn'
+};
+
+const DEPT_CONFIG = {
+  ird:         { report: 'ird_menu',     screens: ['IRD Full Menu (/fullmenu)', 'Cart (/cart)'], hasFunnel: true  },
+  activity:    { report: 'activity',     screens: ['Picker (/activity)', 'List (/activity/categories)', 'Booking (/activity/booking)'], hasFunnel: true },
+  spa:         { report: 'spa',          screens: ['SPA (/spa)', 'Booking (/spa/booking)'], hasFunnel: true },
+  restaurant:  { report: 'restaurant',   screens: ['Landing (/restaurant)', 'Booking (/restaurant/booking)'], hasFunnel: true },
+  taxi:        { report: 'taxi',         screens: ['Taxi (/taxi)'], hasFunnel: true },
+  housekeeping:{ report: 'housekeeping', screens: ['Housekeeping (/housekeeping)', 'Laundry (/laundry)'], hasFunnel: true },
+  store:       { report: 'store',        screens: ['Browse (/store)', 'Product detail'], hasFunnel: false },
+  chat:        { report: 'chat',         screens: ['Chat (/chat)'], hasFunnel: false },
+  home:        { report: 'home',         screens: ['Home (/home)'], hasFunnel: false },
+};
+
+function aaSetRange(el) {
+  document.querySelectorAll('.fu-range-chip').forEach(c => c.classList.remove('on'));
+  el.classList.add('on');
+  aaStartDate = el.dataset.start;
+  aaEndDate = el.dataset.end;
+  aaCache = {}; aaLoaded = false; aaOpenDepts.clear();
+  aaLoad(true);
+}
+
+function aaSetHotel(val) {
+  aaHotelId = val;
+  aaCache = {}; aaLoaded = false; aaOpenDepts.clear();
+  aaLoad(true);
+}
+
+function aaToggleGap() {
+  const b = document.getElementById('aa-gap-body');
+  const t = document.getElementById('aa-gap-toggle');
+  b.classList.toggle('open');
+  t.querySelector('svg').style.transform = b.classList.contains('open') ? 'rotate(180deg)' : '';
+}
+
+async function aaFetch(report) {
+  const key = `${report}:${aaStartDate}:${aaEndDate}:${aaHotelId}`;
+  if (aaCache[key]) return aaCache[key];
+  let url = `${AA_FN}?report=${report}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
+  // Note: hotel filter via dimensionFilter would require server-side support
+  // For now hotel filter is noted — full support needs ga4.js update
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${report} failed: ${res.status}`);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  aaCache[key] = data;
+  return data;
+}
+
+function aaRows(data) {
+  if (!data?.rows) return [];
+  const dims = data.dimensionHeaders?.map(h => h.name) || [];
+  const mets = data.metricHeaders?.map(h => h.name) || [];
+  return data.rows.map(r => {
+    const obj = {};
+    dims.forEach((d, i) => { obj[d] = r.dimensionValues?.[i]?.value || ''; });
+    mets.forEach((m, i) => { obj[m] = parseInt(r.metricValues?.[i]?.value || 0); });
+    return obj;
+  });
+}
+
+async function aaLoad(force = false) {
+  if (!force && aaLoaded) return;
+  aaLoaded = true;
+
+  const statusEl = document.getElementById('aa-status');
+  if (statusEl) { statusEl.className = 'fu-status fu-warn'; statusEl.textContent = '⟳ Loading...'; }
+  document.getElementById('aa-kpis').innerHTML = '<div class="fu-loading"><div class="fu-spinner"></div>Loading KPIs...</div>';
+  document.getElementById('aa-funnel-body').innerHTML = '<div class="fu-loading"><div class="fu-spinner"></div>Loading...</div>';
+
+  // Reset open depts
+  aaOpenDepts.clear();
+  Object.keys(DEPT_CONFIG).forEach(d => {
+    const body = document.getElementById(`aa-body-${d}`);
+    const chevron = document.querySelector(`#aa-dept-${d} .aa-chevron`);
+    if (body) body.style.display = 'none';
+    if (chevron) chevron.classList.remove('open');
+  });
+
+  try {
+    const [funnel, screens] = await Promise.all([
+      aaFetch('booking_funnel'),
+      aaFetch('screen_views'),
+    ]);
+    aaFunnelData = funnel;
+
+    aaRenderKPIs(funnel, screens);
+    aaRenderFunnel(funnel);
+    aaRenderDeptPills(funnel, screens);
+
+    const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const updEl = document.getElementById('aa-updated');
+    if (updEl) updEl.textContent = `Updated ${now} · GA4 data reflects last 24–48h`;
+    const subEl = document.getElementById('aa-sub');
+    if (subEl) subEl.textContent = `Live from GA4 · orascom-ohm1 · ${aaStartDate} → ${aaEndDate}${aaHotelId ? ' · ' + (document.getElementById('aa-hotel-filter')?.selectedOptions[0]?.text || '') : ''}`;
+    if (statusEl) { statusEl.className = 'fu-status fu-ok'; statusEl.textContent = '● GA4 Data'; }
+
+  } catch(e) {
+    console.error('AA load error:', e);
+    if (statusEl) { statusEl.className = 'fu-status fu-err'; statusEl.textContent = '⚠ Error'; }
+    document.getElementById('aa-kpis').innerHTML = `<div style="font-size:11px;color:var(--red);padding:8px">⚠ ${e.message}</div>`;
+  }
+}
+
+function aaRenderKPIs(funnelData, screensData) {
+  const rows = aaRows(funnelData);
+  const starts = rows.filter(r => r.eventName === 'booking_start').reduce((a, r) => a + r.eventCount, 0);
+  const completes = rows.filter(r => r.eventName === 'booking_complete').reduce((a, r) => a + r.eventCount, 0);
+  const abandoned = rows.filter(r => r.eventName === 'booking_abandoned').reduce((a, r) => a + r.eventCount, 0);
+  const convRate = starts > 0 ? Math.round(completes / starts * 100) : 0;
+  const dropRate = starts > 0 ? Math.round(abandoned / starts * 100) : 0;
+  const sRows = aaRows(screensData).filter(r => !['/','/ LoadingScreen','/LoadingScreen'].includes(r.unifiedScreenName));
+  const totalScreenViews = sRows.reduce((a, r) => a + r.screenPageViews, 0);
+
+  const convColor = convRate >= 25 ? 'var(--teal)' : convRate >= 15 ? 'var(--amber)' : 'var(--red)';
+  document.getElementById('aa-kpis').innerHTML = `
+    <div class="kpi"><div class="kpi-label">Booking starts</div><div class="kpi-val">${starts.toLocaleString()}</div><div class="kpi-delta">guests who began booking</div></div>
+    <div class="kpi"><div class="kpi-label">Completed</div><div class="kpi-val">${completes.toLocaleString()}</div><div class="kpi-delta" style="color:${convColor}">${convRate}% conversion rate</div></div>
+    <div class="kpi"><div class="kpi-label">Abandoned</div><div class="kpi-val">${abandoned.toLocaleString()}</div><div class="kpi-delta dn">${dropRate}% left without completing</div></div>
+    <div class="kpi"><div class="kpi-label">Total screen views</div><div class="kpi-val">${totalScreenViews.toLocaleString()}</div><div class="kpi-delta">across all app screens</div></div>`;
+}
+
+function aaRenderFunnel(data) {
+  const rows = aaRows(data);
+  const starts = rows.filter(r => r.eventName === 'booking_start').reduce((a, r) => a + r.eventCount, 0);
+  const completes = rows.filter(r => r.eventName === 'booking_complete').reduce((a, r) => a + r.eventCount, 0);
+  const abandoned = rows.filter(r => r.eventName === 'booking_abandoned').reduce((a, r) => a + r.eventCount, 0);
+  if (!starts) { document.getElementById('aa-funnel-body').innerHTML = '<div style="font-size:11px;color:var(--text3);padding:12px 0">No booking events in this period.</div>'; return; }
+  const convRate = Math.round(completes / starts * 100);
+  const dropRate = Math.round(abandoned / starts * 100);
+
+  // Dept breakdown (will mostly show (not set) until engineering fixes source_module)
+  const deptStarts = {};
+  rows.filter(r => r.eventName === 'booking_start').forEach(r => {
+    const dept = r['customEvent:source_module'] || '(not set)';
+    deptStarts[dept] = (deptStarts[dept] || 0) + r.eventCount;
+  });
+  const topDepts = Object.entries(deptStarts).sort((a,b) => b[1]-a[1]).slice(0,5);
+  const DEPT_NAMES = { dining:'IRD', spa:'SPA', bms_spa:'SPA (BMS)', activity:'Activity', restaurant:'Restaurant', taxi:'Taxi', housekeeping:'Housekeeping', laundry:'Laundry', store:'Store' };
+
+  document.getElementById('aa-funnel-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+      <div>
+        <div class="fu-funnel" style="height:130px">
+          <div class="fu-funnel-step">
+            <div class="fu-funnel-bar-wrap"><div class="fu-funnel-bar" style="height:120px;background:var(--blue)"></div></div>
+            <div class="fu-funnel-meta"><div class="fu-funnel-label2">Started</div><div class="fu-funnel-num">${starts.toLocaleString()}</div><div class="fu-funnel-rate" style="color:var(--text3)">100%</div></div>
+            <div class="fu-funnel-arrow">→</div>
+          </div>
+          <div class="fu-funnel-step">
+            <div class="fu-funnel-bar-wrap"><div class="fu-funnel-bar" style="height:${Math.max(6,Math.round(abandoned/starts*120))}px;background:var(--amber)"></div></div>
+            <div class="fu-funnel-meta"><div class="fu-funnel-label2">Abandoned</div><div class="fu-funnel-num">${abandoned.toLocaleString()}</div><div class="fu-funnel-rate" style="color:var(--amber)">${dropRate}%</div></div>
+            <div class="fu-funnel-arrow">→</div>
+          </div>
+          <div class="fu-funnel-step">
+            <div class="fu-funnel-bar-wrap"><div class="fu-funnel-bar" style="height:${Math.max(6,Math.round(completes/starts*120))}px;background:var(--teal)"></div></div>
+            <div class="fu-funnel-meta"><div class="fu-funnel-label2">Completed</div><div class="fu-funnel-num">${completes.toLocaleString()}</div><div class="fu-funnel-rate" style="color:${convRate>=20?'var(--teal)':'var(--red)'}">${convRate}%</div></div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--text2);line-height:1.6;margin-top:10px">
+          ${convRate < 20 ? `⚠ <strong>${convRate}% conversion</strong> is below the 20% benchmark. More guests abandon than complete.` : `✓ <strong>${convRate}% conversion</strong> is above benchmark.`}
+        </div>
+      </div>
+      <div>
+        <div class="sec-lbl" style="margin-bottom:8px">Starts by department</div>
+        ${topDepts.map(([dept, count]) => `
+          <div class="fu-bar-row">
+            <div class="fu-bar-label">${DEPT_NAMES[dept] || dept}</div>
+            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/starts*100)}%;background:var(--teal)"></div></div>
+            <div class="fu-bar-val">${count.toLocaleString()}</div>
+            <div class="fu-bar-pct">${Math.round(count/starts*100)}%</div>
+          </div>`).join('')}
+        ${deptStarts['(not set)'] ? `<div style="font-size:9px;color:var(--amber);margin-top:8px">⚠ ${Math.round((deptStarts['(not set)']/starts)*100)}% of starts have no dept — source_module fix needed from engineering.</div>` : ''}
+      </div>
+    </div>`;
+}
+
+function aaRenderDeptPills(funnelData, screensData) {
+  const rows = aaRows(funnelData);
+  const DEPT_MODULE = { ird:'dining', activity:'activity', spa:'spa', restaurant:'restaurant', taxi:'taxi', housekeeping:'housekeeping', store:'store', chat:null, home:'home' };
+  Object.keys(DEPT_CONFIG).forEach(dept => {
+    const pillEl = document.getElementById(`aa-pill-${dept}`);
+    if (!pillEl) return;
+    const mod = DEPT_MODULE[dept];
+    if (!mod) { pillEl.innerHTML = '<span class="aa-health aa-health-na">Tap to load</span>'; return; }
+    const deptStarts = rows.filter(r => r.eventName === 'booking_start' && r['customEvent:source_module'] === mod).reduce((a,r) => a + r.eventCount, 0);
+    const deptCompletes = rows.filter(r => r.eventName === 'booking_complete' && r['customEvent:source_module'] === mod).reduce((a,r) => a + r.eventCount, 0);
+    if (!deptStarts) { pillEl.innerHTML = '<span class="aa-health aa-health-na">Tap to load</span>'; return; }
+    const conv = Math.round(deptCompletes / deptStarts * 100);
+    const cls = conv >= 25 ? 'aa-health-good' : conv >= 15 ? 'aa-health-warn' : 'aa-health-bad';
+    pillEl.innerHTML = `<span class="aa-health ${cls}">${conv}% conv</span>`;
+  });
+}
+
+async function aaToggleDept(dept) {
+  const body = document.getElementById(`aa-body-${dept}`);
+  const chevron = document.querySelector(`#aa-dept-${dept} .aa-chevron`);
+  if (!body) return;
+
+  const isOpen = body.style.display !== 'none';
+  if (isOpen) {
+    body.style.display = 'none';
+    if (chevron) chevron.classList.remove('open');
+    aaOpenDepts.delete(dept);
+    return;
+  }
+
+  body.style.display = 'block';
+  if (chevron) chevron.classList.add('open');
+  aaOpenDepts.add(dept);
+
+  if (aaOpenDepts.has(dept + '_loaded')) return; // already loaded
+  aaOpenDepts.add(dept + '_loaded');
+
+  try {
+    const cfg = DEPT_CONFIG[dept];
+    const data = await aaFetch(cfg.report);
+    const rows = aaRows(data);
+    aaRenderDeptBody(dept, rows, cfg);
+  } catch(e) {
+    body.innerHTML = `<div style="font-size:11px;color:var(--red)">⚠ ${e.message}</div>`;
+  }
+}
+
+function aaRenderDeptBody(dept, rows, cfg) {
+  const body = document.getElementById(`aa-body-${dept}`);
+  if (!rows.length) {
+    body.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:12px 0">No data for this department in the selected period.</div>`;
+    return;
+  }
+
+  // Get funnel stats for this dept
+  let funnelHTML = '';
+  if (cfg.hasFunnel && aaFunnelData) {
+    const fRows = aaRows(aaFunnelData);
+    const MODULE_MAP = { ird:'dining', activity:'activity', spa:'spa', restaurant:'restaurant', taxi:'taxi', housekeeping:'housekeeping' };
+    const mod = MODULE_MAP[dept];
+    if (mod) {
+      const s = fRows.filter(r => r.eventName==='booking_start' && r['customEvent:source_module']===mod).reduce((a,r)=>a+r.eventCount,0);
+      const c = fRows.filter(r => r.eventName==='booking_complete' && r['customEvent:source_module']===mod).reduce((a,r)=>a+r.eventCount,0);
+      const ab = fRows.filter(r => r.eventName==='booking_abandoned' && r['customEvent:source_module']===mod).reduce((a,r)=>a+r.eventCount,0);
+      if (s > 0) {
+        const conv = Math.round(c/s*100);
+        funnelHTML = `<div class="aa-stat-row">
+          <div class="aa-stat"><div class="aa-stat-label">Booking starts</div><div class="aa-stat-val">${s.toLocaleString()}</div></div>
+          <div class="aa-stat"><div class="aa-stat-label">Completed</div><div class="aa-stat-val">${c.toLocaleString()}</div><div class="aa-stat-sub" style="color:${conv>=20?'var(--teal)':'var(--red)'}">${conv}% conversion</div></div>
+          <div class="aa-stat"><div class="aa-stat-label">Abandoned</div><div class="aa-stat-val">${ab.toLocaleString()}</div><div class="aa-stat-sub" style="color:var(--amber)">${s>0?Math.round(ab/s*100):0}% of starters</div></div>
+        </div>`;
+      }
+    }
+  }
+
+  // Top interactions
+  const labelKey = rows[0]['customEvent:label'] !== undefined ? 'customEvent:label' : 'label';
+  const valueKey = rows[0]['customEvent:value'] !== undefined ? 'customEvent:value' : 'value';
+  const eventKey = rows[0].eventName !== undefined ? 'eventName' : null;
+
+  const top = rows.slice(0, 12);
+  const maxCount = top[0]?.eventCount || 1;
+  const total = top.reduce((a, r) => a + r.eventCount, 0);
+
+  const interactionsHTML = `
+    <div class="sec-lbl" style="margin-bottom:10px">Top interactions · ${rows.length} event types · ${total.toLocaleString()} total</div>
+    ${top.map(r => {
+      const evtName = eventKey ? r[eventKey] : '';
+      const isSpecial = evtName && evtName !== 'click_event';
+      const label = r[labelKey] || evtName || '—';
+      const value = r[valueKey] || '';
+      const pct = Math.round(r.eventCount / total * 100);
+      return `<div class="fu-bar-row">
+        <div class="fu-bar-label" title="${label}${value?' · '+value:''}">
+          ${isSpecial ? `<span style="font-size:8px;background:var(--blue-l);color:var(--blue-d);padding:1px 5px;border-radius:8px;margin-right:4px">${evtName}</span>` : ''}
+          ${label}${value ? ` <span style="color:var(--text3);font-size:9px">· ${value.slice(0,25)}${value.length>25?'...':''}</span>` : ''}
+        </div>
+        <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(r.eventCount/maxCount*100)}%;background:${isSpecial?'var(--blue)':'var(--teal)'}"></div></div>
+        <div class="fu-bar-val">${r.eventCount.toLocaleString()}</div>
+        <div class="fu-bar-pct">${pct}%</div>
+      </div>`;
+    }).join('')}
+    ${rows.length > 12 ? `<div style="font-size:10px;color:var(--text3);margin-top:6px">+${rows.length-12} more event types</div>` : ''}`;
+
+  // Special notes per dept
+  const NOTES = {
+    chat: `<div style="background:var(--teal-l);border:1px solid var(--teal);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--teal-d)">Chat tracks: back/home nav, suggested prompt taps (with text + position), and message sends (with text). This tells you what guests ask and which prompts they use most.</div>`,
+    taxi: `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Taxi has dedicated events: taxi_time_selected (date/time chosen) and taxi_vehicle_selected (vehicle + price). These appear with a blue label below.</div>`,
+    housekeeping: `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Laundry order total always = 0 (app bug — not dashboard issue). Housekeeping fires an <code>order</code> event with real total when request is placed.</div>`,
+    spa: `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Casa Cook SPA closed Jun 1 – Oct 15. Data here is pre-closure. BMS SPA (Chedi only) may show data separately. Instrument before reopening.</div>`,
+    store: `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Store is Chedi-only. Tracks: category cards, product views, filter opens, and store_item_added_to_cart (dedicated event with item name + price). "You may also like" recommendations on product detail page are not tracked.</div>`,
+  };
+
+  body.innerHTML = (NOTES[dept] || '') + funnelHTML + interactionsHTML;
 }
 
 /* ══════════════════════════════════════════════════════════
