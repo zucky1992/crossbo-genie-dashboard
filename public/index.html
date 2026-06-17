@@ -1641,7 +1641,7 @@ async function computeSummary(monthKey) {
     const avgLOS = nightCount > 0 ? +(totalNights/nightCount).toFixed(1) : null;
 
     // staff-raised vs guest-raised
-    const guestSources = new Set(['GENIE','GENIE_CHAT','LUNA']);
+    const guestSources = new Set(['GENIE','GENIE_CHAT','GENIE_WHATSAPP']);
     const staffRaised = tkH.filter(r => !guestSources.has((r['createdBy.source']||'').toUpperCase())).length;
     const guestRaised = tkH.filter(r => guestSources.has((r['createdBy.source']||'').toUpperCase())).length;
 
