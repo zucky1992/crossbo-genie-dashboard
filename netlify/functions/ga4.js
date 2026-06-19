@@ -1,6 +1,6 @@
 /**
- * Netlify Function: ga4.js v2
- * Full event inventory across all departments.
+ * Netlify Function: ga4.js v3
+ * Full event inventory + rich dimension queries using all 35 registered custom dimensions.
  */
 
 const GA4_PROPERTY_ID = '503373961';
@@ -46,11 +46,19 @@ async function runReport(token, body) {
   return res.json();
 }
 
+function moduleFilter(module) {
+  const mods = Array.isArray(module) ? module : [module];
+  if (mods.length === 1) return { filter: { fieldName: 'customEvent:source_module', stringFilter: { value: mods[0] } } };
+  return { orGroup: { expressions: mods.map(m => ({ filter: { fieldName: 'customEvent:source_module', stringFilter: { value: m } } })) } };
+}
+
 function clickFilter(module, screen) {
-  const expressions = [
-    { filter: { fieldName: 'eventName', stringFilter: { value: 'click_event' } } }
-  ];
-  if (module) expressions.push({ filter: { fieldName: 'customEvent:source_module', stringFilter: { value: module } } });
+  const expressions = [{ filter: { fieldName: 'eventName', stringFilter: { value: 'click_event' } } }];
+  if (module) {
+    const mods = Array.isArray(module) ? module : [module];
+    if (mods.length === 1) expressions.push({ filter: { fieldName: 'customEvent:source_module', stringFilter: { value: mods[0] } } });
+    else expressions.push({ orGroup: { expressions: mods.map(m => ({ filter: { fieldName: 'customEvent:source_module', stringFilter: { value: m } } })) } });
+  }
   if (screen) expressions.push({ filter: { fieldName: 'customEvent:source_screen', stringFilter: { value: screen } } });
   return expressions.length === 1 ? expressions[0] : { andGroup: { expressions } };
 }
@@ -78,10 +86,13 @@ function buildReportBody(report, startDate, endDate) {
       limit: 50,
     },
 
-    // ── Booking funnel all depts ───────────────────────────────────────
+    // ── Booking funnel with dept breakdown ────────────────────────────
     booking_funnel: {
       dateRanges: dateRange,
-      dimensions: [{ name: 'eventName' }, { name: 'customEvent:source_module' }],
+      dimensions: [
+        { name: 'eventName' },
+        { name: 'customEvent:source_module' },
+      ],
       metrics: [{ name: 'eventCount' }],
       dimensionFilter: {
         orGroup: { expressions: [
@@ -94,7 +105,72 @@ function buildReportBody(report, startDate, endDate) {
       limit: 500,
     },
 
-    // ── All click_events with label + screen ──────────────────────────
+    // ── Abandonment by step — WHERE guests drop off ───────────────────
+    abandon_by_step: {
+      dateRanges: dateRange,
+      dimensions: [
+        { name: 'customEvent:source_module' },
+        { name: 'customEvent:step' },
+      ],
+      metrics: [{ name: 'eventCount' }],
+      dimensionFilter: {
+        filter: { fieldName: 'eventName', stringFilter: { value: 'booking_abandoned' } }
+      },
+      orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
+      limit: 200,
+    },
+
+    // ── Booking complete enriched — value, guests, time, category ─────
+    booking_complete_detail: {
+      dateRanges: dateRange,
+      dimensions: [
+        { name: 'customEvent:source_module' },
+        { name: 'customEvent:category' },
+        { name: 'customEvent:service' },
+        { name: 'customEvent:guest_count' },
+        { name: 'customEvent:time_taken' },
+        { name: 'customEvent:total' },
+      ],
+      metrics: [{ name: 'eventCount' }],
+      dimensionFilter: {
+        filter: { fieldName: 'eventName', stringFilter: { value: 'booking_complete' } }
+      },
+      orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
+      limit: 500,
+    },
+
+    // ── Revenue by dept (booking_complete total) ──────────────────────
+    revenue_by_dept: {
+      dateRanges: dateRange,
+      dimensions: [
+        { name: 'customEvent:source_module' },
+        { name: 'customEvent:total' },
+      ],
+      metrics: [{ name: 'eventCount' }],
+      dimensionFilter: {
+        filter: { fieldName: 'eventName', stringFilter: { value: 'booking_complete' } }
+      },
+      orderBys: [{ dimension: { dimensionName: 'customEvent:source_module' } }],
+      limit: 500,
+    },
+
+    // ── Top services booked ───────────────────────────────────────────
+    top_services: {
+      dateRanges: dateRange,
+      dimensions: [
+        { name: 'customEvent:source_module' },
+        { name: 'customEvent:category' },
+        { name: 'customEvent:service' },
+      ],
+      metrics: [{ name: 'eventCount' }],
+      dimensionFilter: {
+        filter: { fieldName: 'eventName', stringFilter: { value: 'booking_complete' } }
+      },
+      orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
+      limit: 200,
+    },
+
+    // ── All click_events ──────────────────────────────────────────────
     click_events: {
       dateRanges: dateRange,
       dimensions: clickDims,
@@ -114,14 +190,14 @@ function buildReportBody(report, startDate, endDate) {
       limit: 100,
     },
 
-    // ── IRD (dining) ──────────────────────────────────────────────────
+    // ── IRD ───────────────────────────────────────────────────────────
     ird_menu: {
       dateRanges: dateRange,
       dimensions: clickDims,
       metrics: [{ name: 'eventCount' }],
       dimensionFilter: clickFilter('dining', null),
       orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
-      limit: 100,
+      limit: 200,
     },
 
     // ── Cart ──────────────────────────────────────────────────────────
@@ -144,7 +220,7 @@ function buildReportBody(report, startDate, endDate) {
       limit: 100,
     },
 
-    // ── SPA (both non-BMS and BMS) ────────────────────────────────────
+    // ── SPA ───────────────────────────────────────────────────────────
     spa: {
       dateRanges: dateRange,
       dimensions: clickDims,
@@ -176,6 +252,8 @@ function buildReportBody(report, startDate, endDate) {
         { name: 'eventName' },
         { name: 'customEvent:label' },
         { name: 'customEvent:value' },
+        { name: 'customEvent:vehicle' },
+        { name: 'customEvent:step' },
       ],
       metrics: [{ name: 'eventCount' }],
       dimensionFilter: {
@@ -192,7 +270,12 @@ function buildReportBody(report, startDate, endDate) {
     // ── Housekeeping ──────────────────────────────────────────────────
     housekeeping: {
       dateRanges: dateRange,
-      dimensions: [{ name: 'eventName' }, { name: 'customEvent:label' }, { name: 'customEvent:value' }],
+      dimensions: [
+        { name: 'eventName' },
+        { name: 'customEvent:label' },
+        { name: 'customEvent:value' },
+        { name: 'customEvent:total' },
+      ],
       metrics: [{ name: 'eventCount' }],
       dimensionFilter: {
         orGroup: { expressions: [
@@ -207,7 +290,13 @@ function buildReportBody(report, startDate, endDate) {
     // ── Store ─────────────────────────────────────────────────────────
     store: {
       dateRanges: dateRange,
-      dimensions: [{ name: 'eventName' }, { name: 'customEvent:label' }, { name: 'customEvent:value' }],
+      dimensions: [
+        { name: 'eventName' },
+        { name: 'customEvent:label' },
+        { name: 'customEvent:value' },
+        { name: 'customEvent:total' },
+        { name: 'customEvent:category' },
+      ],
       metrics: [{ name: 'eventCount' }],
       dimensionFilter: {
         orGroup: { expressions: [
@@ -222,7 +311,11 @@ function buildReportBody(report, startDate, endDate) {
     // ── Chat ──────────────────────────────────────────────────────────
     chat: {
       dateRanges: dateRange,
-      dimensions: [{ name: 'customEvent:label' }, { name: 'customEvent:value' }],
+      dimensions: [
+        { name: 'customEvent:label' },
+        { name: 'customEvent:value' },
+        { name: 'customEvent:index' },
+      ],
       metrics: [{ name: 'eventCount' }],
       dimensionFilter: {
         andGroup: { expressions: [
@@ -237,21 +330,35 @@ function buildReportBody(report, startDate, endDate) {
     // ── Recommendations ───────────────────────────────────────────────
     recommendations: {
       dateRanges: dateRange,
-      dimensions: [{ name: 'customEvent:label' }, { name: 'customEvent:value' }, { name: 'customEvent:source_module' }],
+      dimensions: [
+        { name: 'eventName' },
+        { name: 'customEvent:label' },
+        { name: 'customEvent:value' },
+        { name: 'customEvent:source_module' },
+      ],
       metrics: [{ name: 'eventCount' }],
       dimensionFilter: {
-        andGroup: { expressions: [
-          { filter: { fieldName: 'eventName', stringFilter: { value: 'click_event' } } },
-          { filter: { fieldName: 'customEvent:label', stringFilter: { value: 'add_suggested_item' } } },
+        orGroup: { expressions: [
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'recommendation_impression' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'recommendation_added_to_cart' } } },
+          { andGroup: { expressions: [
+            { filter: { fieldName: 'eventName', stringFilter: { value: 'click_event' } } },
+            { filter: { fieldName: 'customEvent:label', stringFilter: { value: 'add_suggested_item' } } },
+          ]}},
         ]}
       },
+      orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
       limit: 200,
     },
 
     // ── Spotlight taps ────────────────────────────────────────────────
     spotlight: {
       dateRanges: dateRange,
-      dimensions: clickDims,
+      dimensions: [
+        { name: 'customEvent:label' },
+        { name: 'customEvent:value' },
+        { name: 'customEvent:index' },
+      ],
       metrics: [{ name: 'eventCount' }],
       dimensionFilter: {
         andGroup: { expressions: [

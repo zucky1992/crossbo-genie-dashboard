@@ -4332,6 +4332,9 @@ let aaCache = {};
 let aaLoaded = false;
 let aaOpenDepts = new Set();
 let aaFunnelData = null;
+let aaAbandonData = null;
+let aaCompleteData = null;
+let aaServicesData = null;
 
 // Hotel UUID → hotel_id param mapping
 const HOTEL_IDS = {
@@ -4420,11 +4423,18 @@ async function aaLoad(force = false) {
   });
 
   try {
-    const [funnel, screens] = await Promise.all([
+    const [funnel, screens, abandon, complete, services] = await Promise.all([
       aaFetch('booking_funnel'),
       aaFetch('screen_views'),
+      aaFetch('abandon_by_step'),
+      aaFetch('booking_complete_detail'),
+      aaFetch('top_services'),
     ]);
+
     aaFunnelData = funnel;
+    aaAbandonData = abandon;
+    aaCompleteData = complete;
+    aaServicesData = services;
 
     aaRenderKPIs(funnel, screens);
     aaRenderFunnel(funnel);
@@ -4571,141 +4581,113 @@ function aaRenderDeptBody(dept, rows, cfg) {
     return;
   }
 
-  // ── Funnel for every dept ─────────────────────────────────────────────────
-  const MODULE_MAP = { ird:'dining', activity:'activity', spa:'spa', restaurant:'restaurant', taxi:'taxi', housekeeping:'housekeeping' };
+  // ── Rich metrics from booking_complete_detail ─────────────────────────────
+  const MODULE_MAP = { ird:'dining', activity:'activity', spa:'spa', restaurant:'restaurant', taxi:'taxi', housekeeping:'housekeeping', store:'store' };
+  const mod = MODULE_MAP[dept];
+  let richHTML = '';
 
-  // Dept-specific funnel steps built from click_event labels + booking events
-  const DEPT_FUNNELS = {
-    ird: [
-      { label: 'Menu opened', events: ['booking_start'], module: 'dining', eventName: 'booking_start' },
-      { label: 'Item viewed', labelMatch: 'dining_menu_item' },
-      { label: 'Added to cart', labelMatch: ['add_to_cart', 'add_to_cart_button'] },
-      { label: 'Cart opened', labelMatch: 'cart_button' },
-      { label: 'Order placed', events: ['booking_complete'], module: 'dining', eventName: 'booking_complete' },
-    ],
-    activity: [
-      { label: 'Activity opened', eventName: 'booking_view', module: 'activity' },
-      { label: 'Activity selected', labelMatch: 'activity_card' },
-      { label: 'Booking started', eventName: 'booking_start', module: 'activity' },
-      { label: 'Date selected', labelMatch: 'date_option' },
-      { label: 'Booking complete', eventName: 'booking_complete', module: 'activity' },
-    ],
-    spa: [
-      { label: 'SPA opened', eventName: 'booking_view', module: 'spa' },
-      { label: 'Treatment selected', labelMatch: ['service_selection', 'treatment', 'service_card'] },
-      { label: 'Booking started', eventName: 'booking_start', module: 'spa' },
-      { label: 'Date/time picked', labelMatch: 'date_option' },
-      { label: 'Booking complete', eventName: 'booking_complete', module: 'spa' },
-    ],
-    restaurant: [
-      { label: 'Restaurant opened', eventName: 'booking_view', module: 'restaurant' },
-      { label: 'Booking started', eventName: 'booking_start', module: 'restaurant' },
-      { label: 'Date selected', labelMatch: 'date_option' },
-      { label: 'Time selected', labelMatch: 'time_slot_option' },
-      { label: 'Reservation placed', eventName: 'booking_complete', module: 'restaurant' },
-    ],
-    taxi: [
-      { label: 'Taxi opened', eventName: 'booking_view', module: 'taxi' },
-      { label: 'Destination picked', labelMatch: 'destination_option' },
-      { label: 'Time selected', eventName: 'taxi_time_selected' },
-      { label: 'Vehicle selected', eventName: 'taxi_vehicle_selected' },
-      { label: 'Booking confirmed', eventName: 'booking_complete', module: 'taxi' },
-    ],
-    housekeeping: [
-      { label: 'HK opened', eventName: 'booking_start', module: 'housekeeping' },
-      { label: 'Item toggled', labelMatch: ['add_item', 'remove_item', 'add_remove_button'] },
-      { label: 'Category selected', labelMatch: 'housekeeping_tab_button' },
-      { label: 'Request placed', eventName: 'order' },
-      { label: 'Booking complete', eventName: 'booking_complete', module: 'housekeeping' },
-    ],
-    store: [
-      { label: 'Store entered', eventName: 'booking_start', module: 'store' },
-      { label: 'Category selected', labelMatch: 'category_selection' },
-      { label: 'Product viewed', labelMatch: 'product_view' },
-      { label: 'Added to cart', eventName: 'store_item_added_to_cart' },
-      { label: 'Order placed', eventName: 'booking_complete', module: 'store' },
-    ],
-    chat: [
-      { label: 'Chat opened', screen: '/chat' },
-      { label: 'Prompt tapped', labelMatch: 'chat_prompt' },
-      { label: 'Message sent', labelMatch: 'chat_send' },
-    ],
-    home: [
-      { label: 'Home opened', screen: '/home' },
-      { label: 'Quick action tapped', labelMatch: 'quick_actions' },
-      { label: 'Spotlight tapped', labelMatch: ['spotlight_carousel_card','spotlight_spa_card','spotlight_dish_card','spotlight_activity_card'] },
-      { label: 'Nav tapped', labelMatch: 'bottom_navigation' },
-    ],
-  };
+  if (mod && aaCompleteData && aaAbandonData) {
+    const cRows = aaRows(aaCompleteData).filter(r => r['customEvent:source_module'] === mod);
+    const aRows = aaRows(aaAbandonData).filter(r => r['customEvent:source_module'] === mod);
+    const fRows = aaRows(aaFunnelData);
 
-  // Calculate step counts
-  const funnelSteps = DEPT_FUNNELS[dept] || [];
-  const funnelData = funnelSteps.map(step => {
-    let count = 0;
-    if (step.eventName && aaFunnelData) {
-      // From booking funnel data
-      const fRows = aaRows(aaFunnelData);
-      count = fRows.filter(r => {
-        if (r.eventName !== step.eventName) return false;
-        if (step.module) return r['customEvent:source_module'] === step.module;
-        return true;
-      }).reduce((a, r) => a + r.eventCount, 0);
-      // Also check in dept rows for dedicated events
-      if (count === 0) {
-        count = rows.filter(r => r.eventName === step.eventName).reduce((a, r) => a + r.eventCount, 0);
-      }
+    const totalStarts = fRows.filter(r => r.eventName === 'booking_start' && r['customEvent:source_module'] === mod).reduce((a,r) => a + r.eventCount, 0);
+    const totalCompletes = cRows.reduce((a,r) => a + r.eventCount, 0);
+    const totalAbandons = aRows.reduce((a,r) => a + r.eventCount, 0);
+    const convRate = totalStarts > 0 ? Math.round(totalCompletes/totalStarts*100) : 0;
+
+    // Revenue — sum total × eventCount
+    let totalRevenue = 0;
+    let revenueCount = 0;
+    cRows.forEach(r => {
+      const t = parseFloat(r['customEvent:total'] || 0);
+      if (t > 0) { totalRevenue += t * r.eventCount; revenueCount += r.eventCount; }
+    });
+    const avgRevenue = revenueCount > 0 ? Math.round(totalRevenue / revenueCount) : 0;
+
+    // Avg guests
+    let totalGuests = 0, guestCount = 0;
+    cRows.forEach(r => {
+      const g = parseFloat(r['customEvent:guest_count'] || 0);
+      if (g > 0) { totalGuests += g * r.eventCount; guestCount += r.eventCount; }
+    });
+    const avgGuests = guestCount > 0 ? (totalGuests/guestCount).toFixed(1) : null;
+
+    // Avg time taken (seconds → minutes)
+    let totalTime = 0, timeCount = 0;
+    cRows.forEach(r => {
+      const t = parseFloat(r['customEvent:time_taken'] || 0);
+      if (t > 0 && t < 3600) { totalTime += t * r.eventCount; timeCount += r.eventCount; }
+    });
+    const avgMins = timeCount > 0 ? Math.round(totalTime/timeCount/60) : null;
+
+    // Abandonment by step
+    const stepCounts = {};
+    aRows.forEach(r => {
+      const step = r['customEvent:step'] || '(unknown)';
+      stepCounts[step] = (stepCounts[step] || 0) + r.eventCount;
+    });
+    const topSteps = Object.entries(stepCounts).sort((a,b) => b[1]-a[1]);
+
+    // Top services booked
+    const svcCounts = {};
+    if (aaServicesData) {
+      aaRows(aaServicesData).filter(r => r['customEvent:source_module'] === mod).forEach(r => {
+        const svc = r['customEvent:service'] || r['customEvent:category'] || '';
+        if (svc) svcCounts[svc] = (svcCounts[svc] || 0) + r.eventCount;
+      });
     }
-    if (step.labelMatch) {
-      const matches = Array.isArray(step.labelMatch) ? step.labelMatch : [step.labelMatch];
-      const labelKey = rows[0]?.['customEvent:label'] !== undefined ? 'customEvent:label' : 'label';
-      count = rows.filter(r => matches.includes(r[labelKey])).reduce((a, r) => a + r.eventCount, 0);
-    }
-    return { label: step.label, count };
-  }).filter(s => s.count > 0);
+    const topSvcs = Object.entries(svcCounts).sort((a,b) => b[1]-a[1]).slice(0,5);
 
-  let funnelHTML = '';
-  if (funnelData.length >= 2) {
-    const maxCount = funnelData[0].count;
-    funnelHTML = `
-      <div style="margin-bottom:16px">
-        <div class="sec-lbl" style="margin-bottom:10px">User flow · where guests drop off</div>
-        <div style="display:flex;align-items:flex-end;gap:4px;height:100px;margin-bottom:8px">
-          ${funnelData.map((s, i) => {
-            const h = Math.max(8, Math.round(s.count / maxCount * 88));
-            const dropPct = i > 0 && funnelData[i-1].count > 0 ? Math.round((1 - s.count/funnelData[i-1].count)*100) : 0;
-            const color = i === 0 ? 'var(--blue)' : i === funnelData.length-1 ? 'var(--teal)' : `hsl(${180 - i*20},60%,45%)`;
-            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
-              ${i > 0 && dropPct > 0 ? `<div style="font-size:8px;color:var(--red);font-weight:500">-${dropPct}%</div>` : '<div style="font-size:8px"> </div>'}
-              <div style="width:100%;border-radius:3px 3px 0 0;background:${color};height:${h}px;transition:height .4s"></div>
-            </div>`;
-          }).join('<div style="flex:0 0 2px;align-self:flex-end;height:2px;background:var(--border2);margin-bottom:0"></div>')}
-        </div>
-        <div style="display:flex;gap:4px">
-          ${funnelData.map(s => `<div style="flex:1;text-align:center">
-            <div style="font-size:9px;font-weight:500;font-variant-numeric:tabular-nums">${s.count.toLocaleString()}</div>
-            <div style="font-size:8px;color:var(--text3);margin-top:2px;line-height:1.3">${s.label}</div>
-          </div>`).join('<div style="flex:0 0 2px"></div>')}
-        </div>
+    // Stat cards
+    const statCards = [
+      { label: 'Starts', val: totalStarts.toLocaleString(), sub: '' },
+      { label: 'Completed', val: totalCompletes.toLocaleString(), sub: `${convRate}% conv.`, subColor: convRate>=20?'var(--teal)':'var(--red)' },
+      { label: 'Abandoned', val: totalAbandons.toLocaleString(), sub: `${totalStarts>0?Math.round(totalAbandons/totalStarts*100):0}% of starts`, subColor: 'var(--amber)' },
+    ];
+    if (avgRevenue > 0) statCards.push({ label: 'Avg order value', val: `€${avgRevenue}`, sub: 'per booking' });
+    if (avgGuests) statCards.push({ label: 'Avg party size', val: avgGuests, sub: 'guests per booking' });
+    if (avgMins) statCards.push({ label: 'Avg booking time', val: `${avgMins}m`, sub: 'to complete' });
+
+    richHTML = `<div style="display:grid;grid-template-columns:repeat(${Math.min(statCards.length,3)},1fr);gap:10px;margin-bottom:16px">
+      ${statCards.map(s => `<div class="aa-stat">
+        <div class="aa-stat-label">${s.label}</div>
+        <div class="aa-stat-val">${s.val}</div>
+        ${s.sub ? `<div class="aa-stat-sub" style="${s.subColor?'color:'+s.subColor:''}">${s.sub}</div>` : ''}
+      </div>`).join('')}
+    </div>`;
+
+    // Drop-off by step
+    if (topSteps.length > 0) {
+      const maxStep = topSteps[0][1];
+      richHTML += `<div style="margin-bottom:16px">
+        <div class="sec-lbl" style="margin-bottom:8px">Where guests abandon · booking step</div>
+        ${topSteps.map(([step, count]) => `
+          <div class="fu-bar-row">
+            <div class="fu-bar-label" style="font-size:11px">${step}</div>
+            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/maxStep*100)}%;background:var(--amber)"></div></div>
+            <div class="fu-bar-val">${count.toLocaleString()}</div>
+            <div class="fu-bar-pct">${totalAbandons>0?Math.round(count/totalAbandons*100):0}%</div>
+          </div>`).join('')}
       </div>`;
-  } else if (cfg.hasFunnel && aaFunnelData) {
-    // Fallback: simple booking start/complete/abandon from funnel data
-    const mod = MODULE_MAP[dept];
-    if (mod) {
-      const fRows = aaRows(aaFunnelData);
-      const s = fRows.filter(r => r.eventName==='booking_start' && r['customEvent:source_module']===mod).reduce((a,r)=>a+r.eventCount,0);
-      const c = fRows.filter(r => r.eventName==='booking_complete' && r['customEvent:source_module']===mod).reduce((a,r)=>a+r.eventCount,0);
-      const ab = fRows.filter(r => r.eventName==='booking_abandoned' && r['customEvent:source_module']===mod).reduce((a,r)=>a+r.eventCount,0);
-      if (s > 0) {
-        const conv = Math.round(c/s*100);
-        funnelHTML = `<div class="aa-stat-row" style="margin-bottom:16px">
-          <div class="aa-stat"><div class="aa-stat-label">Booking starts</div><div class="aa-stat-val">${s.toLocaleString()}</div></div>
-          <div class="aa-stat"><div class="aa-stat-label">Completed</div><div class="aa-stat-val">${c.toLocaleString()}</div><div class="aa-stat-sub" style="color:${conv>=20?'var(--teal)':'var(--red)'}">${conv}% conversion</div></div>
-          <div class="aa-stat"><div class="aa-stat-label">Abandoned</div><div class="aa-stat-val">${ab.toLocaleString()}</div><div class="aa-stat-sub" style="color:var(--amber)">${Math.round(ab/s*100)}% of starters</div></div>
-        </div>`;
-      }
+    }
+
+    // Top services
+    if (topSvcs.length > 0) {
+      const maxSvc = topSvcs[0][1];
+      richHTML += `<div style="margin-bottom:16px">
+        <div class="sec-lbl" style="margin-bottom:8px">Top services booked</div>
+        ${topSvcs.map(([svc, count]) => `
+          <div class="fu-bar-row">
+            <div class="fu-bar-label" style="font-size:11px">${svc}</div>
+            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/maxSvc*100)}%;background:var(--teal)"></div></div>
+            <div class="fu-bar-val">${count.toLocaleString()}</div>
+          </div>`).join('')}
+      </div>`;
     }
   }
 
+  // Dept-specific funnel steps built from click_event labels + booking events
   // ── All interactions — grouped by label, expandable ──────────────────────
   const labelKey = rows[0]['customEvent:label'] !== undefined ? 'customEvent:label' : 'label';
   const valueKey = rows[0]['customEvent:value'] !== undefined ? 'customEvent:value' : 'value';
@@ -4776,7 +4758,7 @@ function aaRenderDeptBody(dept, rows, cfg) {
     store: `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Store is Chedi-only. store_item_added_to_cart fires with item name + price. "You may also like" on product detail is not yet tracked.</div>`,
   };
 
-  body.innerHTML = (NOTES[dept] || '') + funnelHTML + interactionsHTML;
+  body.innerHTML = (NOTES[dept] || '') + richHTML + interactionsHTML;
 }
 
 function aaToggleGroup(uid) {
