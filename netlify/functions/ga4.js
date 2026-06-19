@@ -327,14 +327,14 @@ function buildReportBody(report, startDate, endDate) {
       limit: 100,
     },
 
-    // ── Recommendations ───────────────────────────────────────────────
+    // ── Recommendations — impression + tap + add ──────────────────────
     recommendations: {
       dateRanges: dateRange,
       dimensions: [
         { name: 'eventName' },
-        { name: 'customEvent:label' },
-        { name: 'customEvent:value' },
         { name: 'customEvent:source_module' },
+        { name: 'customEvent:value' },
+        { name: 'customEvent:label' },
       ],
       metrics: [{ name: 'eventCount' }],
       dimensionFilter: {
@@ -349,6 +349,41 @@ function buildReportBody(report, startDate, endDate) {
       },
       orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
       limit: 200,
+    },
+
+    // ── Notifications funnel ──────────────────────────────────────────
+    notifications: {
+      dateRanges: dateRange,
+      dimensions: [{ name: 'eventName' }],
+      metrics: [{ name: 'eventCount' }],
+      dimensionFilter: {
+        orGroup: { expressions: [
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'notification_receive' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'notification_open' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'notification_dismiss' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'notification_foreground' } } },
+        ]}
+      },
+      limit: 20,
+    },
+
+    // ── App health ────────────────────────────────────────────────────
+    app_health: {
+      dateRanges: dateRange,
+      dimensions: [{ name: 'eventName' }],
+      metrics: [{ name: 'eventCount' }],
+      dimensionFilter: {
+        orGroup: { expressions: [
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'app_exception' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'app_remove' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'first_open' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'app_update' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'app_session_start' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'sustainability_tray_opened' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'sustainability_action_completed' } } },
+        ]}
+      },
+      limit: 20,
     },
 
     // ── Spotlight taps ────────────────────────────────────────────────

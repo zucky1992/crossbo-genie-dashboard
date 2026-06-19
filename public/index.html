@@ -844,7 +844,35 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
       </div>
     </div>
 
-    <!-- Section 3: Engineering gaps (collapsed) -->
+    <!-- Section 3: Recommendations carousel -->
+    <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px;margin-top:6px">Carousel performance</div>
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-head">
+        <div><div class="card-title">Recommendation carousel</div><div class="card-sub">"Add some more delicacies" · impression → tap → added to cart</div></div>
+        <span class="fu-status fu-ok" id="aa-rec-status">● Live</span>
+      </div>
+      <div id="aa-rec-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
+    </div>
+
+    <!-- Section 4: Notifications -->
+    <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px;margin-top:6px">Push notifications</div>
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-head">
+        <div><div class="card-title">Notification funnel</div><div class="card-sub">Delivered → opened · push notification effectiveness</div></div>
+      </div>
+      <div id="aa-notif-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
+    </div>
+
+    <!-- Section 5: App health -->
+    <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px;margin-top:6px">App health</div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-head">
+        <div><div class="card-title">App health metrics</div><div class="card-sub">Crashes · uninstalls · installs · sustainability</div></div>
+      </div>
+      <div id="aa-health-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
+    </div>
+
+    <!-- Section 6: Engineering gaps (collapsed) -->
     <div class="card last">
       <div class="fu-gap-toggle" id="aa-gap-toggle" onclick="aaToggleGap()">
         <div>
@@ -860,8 +888,6 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
             <tr><td>Reels screen — zero tracking</td><td>Global</td><td>No play/skip/complete data</td><td><span class="pill pr">High</span></td></tr>
             <tr><td>Active Requests screen — zero tracking</td><td>Global</td><td>1,000+ views, zero interactions tracked</td><td><span class="pill pr">High</span></td></tr>
             <tr><td>Order History screen — zero tracking</td><td>Global</td><td>Re-order funnel invisible</td><td><span class="pill pr">High</span></td></tr>
-            <tr><td>recommendation_impression</td><td>IRD · Store</td><td>Can't calculate carousel effectiveness</td><td><span class="pill pr">High</span></td></tr>
-            <tr><td>recommendation_added_to_cart</td><td>IRD · Store</td><td>Tap ≠ add — conversion invisible</td><td><span class="pill pr">High</span></td></tr>
             <tr><td>source_module on booking events</td><td>All</td><td>Can't split funnel by dept — all shows (not set)</td><td><span class="pill pr">High</span></td></tr>
             <tr><td>Activity mood picker swipes</td><td>Activity</td><td>"Find my Perfect Experience" — no swipe events</td><td><span class="pill pa">Medium</span></td></tr>
             <tr><td>SPA instrumentation before Oct 15</td><td>SPA</td><td>Reopen without analytics = month of blind data</td><td><span class="pill pa">Medium</span></td></tr>
@@ -4422,12 +4448,15 @@ async function aaLoad(force = false) {
   });
 
   try {
-    const [funnel, screens, abandon, complete, services] = await Promise.all([
+    const [funnel, screens, abandon, complete, services, recs, notifs, health] = await Promise.all([
       aaFetch('booking_funnel'),
       aaFetch('screen_views'),
       aaFetch('abandon_by_step'),
       aaFetch('booking_complete_detail'),
       aaFetch('top_services'),
+      aaFetch('recommendations'),
+      aaFetch('notifications'),
+      aaFetch('app_health'),
     ]);
 
     aaFunnelData = funnel;
@@ -4435,9 +4464,12 @@ async function aaLoad(force = false) {
     aaCompleteData = complete;
     aaServicesData = services;
 
-    aaRenderKPIs(funnel, screens);
+    aaRenderKPIs(funnel, screens, health);
     aaRenderFunnel(funnel);
     aaRenderDeptPills(funnel, screens);
+    aaRenderRecs(recs);
+    aaRenderNotifications(notifs);
+    aaRenderAppHealth(health, screens);
 
     const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     const updEl = document.getElementById('aa-updated');
@@ -4453,22 +4485,22 @@ async function aaLoad(force = false) {
   }
 }
 
-function aaRenderKPIs(funnelData, screensData) {
+function aaRenderKPIs(funnelData, screensData, healthData) {
   const rows = aaRows(funnelData);
   const starts = rows.filter(r => r.eventName === 'booking_start').reduce((a, r) => a + r.eventCount, 0);
   const completes = rows.filter(r => r.eventName === 'booking_complete').reduce((a, r) => a + r.eventCount, 0);
   const abandoned = rows.filter(r => r.eventName === 'booking_abandoned').reduce((a, r) => a + r.eventCount, 0);
   const convRate = starts > 0 ? Math.round(completes / starts * 100) : 0;
   const dropRate = starts > 0 ? Math.round(abandoned / starts * 100) : 0;
-  const sRows = aaRows(screensData).filter(r => !['/','/ LoadingScreen','/LoadingScreen'].includes(r.unifiedScreenName));
-  const totalScreenViews = sRows.reduce((a, r) => a + r.screenPageViews, 0);
-
+  const hRows = healthData ? aaRows(healthData) : [];
+  const crashes = hRows.find(r => r.eventName === 'app_exception')?.eventCount || 0;
   const convColor = convRate >= 25 ? 'var(--teal)' : convRate >= 15 ? 'var(--amber)' : 'var(--red)';
+  const crashColor = crashes > 100 ? 'var(--red)' : crashes > 30 ? 'var(--amber)' : 'var(--teal)';
   document.getElementById('aa-kpis').innerHTML = `
     <div class="kpi"><div class="kpi-label">Booking starts</div><div class="kpi-val">${starts.toLocaleString()}</div><div class="kpi-delta">guests who began booking</div></div>
     <div class="kpi"><div class="kpi-label">Completed</div><div class="kpi-val">${completes.toLocaleString()}</div><div class="kpi-delta" style="color:${convColor}">${convRate}% conversion rate</div></div>
     <div class="kpi"><div class="kpi-label">Abandoned</div><div class="kpi-val">${abandoned.toLocaleString()}</div><div class="kpi-delta dn">${dropRate}% left without completing</div></div>
-    <div class="kpi"><div class="kpi-label">Total screen views</div><div class="kpi-val">${totalScreenViews.toLocaleString()}</div><div class="kpi-delta">across all app screens</div></div>`;
+    <div class="kpi"><div class="kpi-label">App crashes</div><div class="kpi-val">${crashes.toLocaleString()}</div><div class="kpi-delta" style="color:${crashColor}">app_exception events</div></div>`;
 }
 
 function aaRenderFunnel(data) {
@@ -4773,6 +4805,124 @@ function aaToggleGroup(uid) {
   const isOpen = sub.style.display !== 'none';
   sub.style.display = isOpen ? 'none' : 'block';
   if (chev) chev.style.transform = isOpen ? '' : 'rotate(180deg)';
+}
+
+function aaRenderRecs(data) {
+  const el = document.getElementById('aa-rec-body');
+  if (!el) return;
+  const rows = aaRows(data);
+  const impressions = rows.filter(r => r.eventName === 'recommendation_impression').reduce((a,r) => a + r.eventCount, 0);
+  const taps = rows.filter(r => r['customEvent:label'] === 'add_suggested_item').reduce((a,r) => a + r.eventCount, 0);
+  const adds = rows.filter(r => r.eventName === 'recommendation_added_to_cart').reduce((a,r) => a + r.eventCount, 0);
+  const tapRate = impressions > 0 ? (taps/impressions*100).toFixed(1) : '—';
+  const addRate = taps > 0 ? (adds/taps*100).toFixed(1) : '—';
+
+  // Top tapped items
+  const itemRows = rows.filter(r => r['customEvent:label'] === 'add_suggested_item' || r.eventName === 'recommendation_added_to_cart')
+    .sort((a,b) => b.eventCount - a.eventCount);
+  const topItems = {};
+  itemRows.forEach(r => {
+    const name = r['customEvent:value'] || '(unknown)';
+    topItems[name] = (topItems[name] || 0) + r.eventCount;
+  });
+  const sortedItems = Object.entries(topItems).sort((a,b) => b[1]-a[1]).slice(0, 10);
+  const maxItem = sortedItems[0]?.[1] || 1;
+  const totalTaps = sortedItems.reduce((a,[,v]) => a+v, 0);
+
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
+      <div class="aa-stat"><div class="aa-stat-label">Impressions</div><div class="aa-stat-val">${impressions.toLocaleString()}</div><div class="aa-stat-sub">cards seen by guests</div></div>
+      <div class="aa-stat"><div class="aa-stat-label">Taps</div><div class="aa-stat-val">${taps.toLocaleString()}</div><div class="aa-stat-sub" style="color:${impressions>0?'var(--teal)':'var(--text3)'}">${tapRate}% tap rate</div></div>
+      <div class="aa-stat"><div class="aa-stat-label">Added to cart</div><div class="aa-stat-val">${adds.toLocaleString()}</div><div class="aa-stat-sub" style="color:${taps>0?'var(--teal)':'var(--text3)'}">${addRate}% of taps converted</div></div>
+    </div>
+    ${sortedItems.length ? `
+      <div class="sec-lbl" style="margin-bottom:10px">Top recommended items tapped</div>
+      ${sortedItems.map(([name, count]) => `
+        <div class="fu-bar-row">
+          <div class="fu-bar-label">${name}</div>
+          <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/maxItem*100)}%;background:var(--teal)"></div></div>
+          <div class="fu-bar-val">${count.toLocaleString()}</div>
+          <div class="fu-bar-pct">${totalTaps>0?Math.round(count/totalTaps*100):0}%</div>
+        </div>`).join('')}` : '<div style="font-size:11px;color:var(--text3)">No recommendation data in this period.</div>'}`;
+}
+
+function aaRenderNotifications(data) {
+  const el = document.getElementById('aa-notif-body');
+  if (!el) return;
+  const rows = aaRows(data);
+  const received = rows.find(r => r.eventName === 'notification_receive')?.eventCount || 0;
+  const opened = rows.find(r => r.eventName === 'notification_open')?.eventCount || 0;
+  const dismissed = rows.find(r => r.eventName === 'notification_dismiss')?.eventCount || 0;
+  const foreground = rows.find(r => r.eventName === 'notification_foreground')?.eventCount || 0;
+  const openRate = received > 0 ? (opened/received*100).toFixed(1) : '—';
+  const dismissRate = received > 0 ? (dismissed/received*100).toFixed(1) : '—';
+
+  const steps = [
+    { label: 'Delivered', val: received, color: 'var(--blue)' },
+    { label: 'Opened', val: opened, color: 'var(--teal)' },
+    { label: 'Dismissed', val: dismissed, color: 'var(--amber)' },
+  ];
+  const maxVal = received || 1;
+
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
+      <div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:flex-end;height:80px">
+          ${steps.map((s,i) => {
+            const h = Math.max(4, Math.round(s.val/maxVal*70));
+            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center">
+              <div style="width:100%;height:${h}px;background:${s.color};border-radius:3px 3px 0 0;margin-top:${70-h}px"></div>
+            </div>${i<steps.length-1?'<div style="flex:0 0 6px;display:flex;align-items:flex-end;padding-bottom:2px;color:var(--text3);font-size:11px">→</div>':''}`;
+          }).join('')}
+        </div>
+        <div style="display:flex;gap:8px">
+          ${steps.map(s => `<div style="flex:1;text-align:center">
+            <div style="font-size:13px;font-weight:600;font-family:var(--serif)">${s.val.toLocaleString()}</div>
+            <div style="font-size:9px;color:var(--text3);margin-top:2px">${s.label}</div>
+          </div>`).join('<div style="flex:0 0 6px"></div>')}
+        </div>
+      </div>
+      <div>
+        <div class="aa-stat-row" style="grid-template-columns:1fr 1fr;margin-bottom:0">
+          <div class="aa-stat"><div class="aa-stat-label">Open rate</div><div class="aa-stat-val">${openRate}%</div><div class="aa-stat-sub">of delivered notifications</div></div>
+          <div class="aa-stat"><div class="aa-stat-label">Dismiss rate</div><div class="aa-stat-val">${dismissRate}%</div><div class="aa-stat-sub">closed without opening</div></div>
+        </div>
+        ${foreground > 0 ? `<div style="font-size:11px;color:var(--text2);margin-top:12px">${foreground.toLocaleString()} notifications received while app was open (foreground).</div>` : ''}
+        <div style="font-size:11px;color:var(--text2);margin-top:8px;line-height:1.6">
+          ${parseFloat(openRate) < 10 ? '⚠ Open rate below 10% — consider reviewing notification content and timing.' : parseFloat(openRate) >= 20 ? '✓ Strong open rate above 20%.' : 'Open rate is moderate — room to improve with better targeting.'}
+        </div>
+      </div>
+    </div>`;
+}
+
+function aaRenderAppHealth(data, screensData) {
+  const el = document.getElementById('aa-health-body');
+  if (!el) return;
+  const rows = aaRows(data);
+  const get = name => rows.find(r => r.eventName === name)?.eventCount || 0;
+  const crashes = get('app_exception');
+  const uninstalls = get('app_remove');
+  const installs = get('first_open');
+  const updates = get('app_update');
+  const sessions = get('app_session_start');
+  const sustTray = get('sustainability_tray_opened');
+  const sustDone = get('sustainability_action_completed');
+  const sustRate = sustTray > 0 ? Math.round(sustDone/sustTray*100) : 0;
+  const crashRate = sessions > 0 ? (crashes/sessions*100).toFixed(2) : '—';
+  const retentionProxy = installs > 0 ? Math.round((1 - uninstalls/installs)*100) : null;
+
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
+      <div class="aa-stat"><div class="aa-stat-label">App crashes</div><div class="aa-stat-val" style="color:${crashes>100?'var(--red)':crashes>30?'var(--amber)':'var(--text)'}">${crashes.toLocaleString()}</div><div class="aa-stat-sub">${crashRate}% of sessions</div></div>
+      <div class="aa-stat"><div class="aa-stat-label">New installs</div><div class="aa-stat-val">${installs.toLocaleString()}</div><div class="aa-stat-sub">first_open events</div></div>
+      <div class="aa-stat"><div class="aa-stat-label">Uninstalls</div><div class="aa-stat-val" style="color:${uninstalls>installs?'var(--red)':'var(--text)'}">${uninstalls.toLocaleString()}</div><div class="aa-stat-sub">${retentionProxy!==null?retentionProxy+'% install retention':''}</div></div>
+      <div class="aa-stat"><div class="aa-stat-label">Sessions</div><div class="aa-stat-val">${sessions.toLocaleString()}</div><div class="aa-stat-sub">app opens</div></div>
+      <div class="aa-stat"><div class="aa-stat-label">App updates</div><div class="aa-stat-val">${updates.toLocaleString()}</div><div class="aa-stat-sub">guests updated the app</div></div>
+      <div class="aa-stat"><div class="aa-stat-label">Sustainability</div><div class="aa-stat-val">${sustTray.toLocaleString()}</div><div class="aa-stat-sub">${sustRate}% action completion</div></div>
+    </div>
+    ${crashes > 0 ? `<div style="background:${crashes>100?'var(--red-l)':'var(--amber-l)'};border:1px solid ${crashes>100?'var(--red)':'var(--amber)'};border-radius:var(--radius-sm);padding:10px 12px;font-size:11px;color:${crashes>100?'var(--red-d)':'var(--amber-d)'};line-height:1.6">
+      ${crashes>100?'⚠ High crash count':'ℹ Crashes detected'} — ${crashes.toLocaleString()} app_exception events in this period. Share this with engineering to investigate stack traces in Firebase Crashlytics.
+    </div>` : '<div style="font-size:11px;color:var(--teal-d);background:var(--teal-l);border-radius:var(--radius-sm);padding:8px 12px">✓ No crashes detected in this period.</div>'}`;
 }
 
 /* ══════════════════════════════════════════════════════════
