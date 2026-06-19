@@ -402,9 +402,20 @@ exports.handler = async (event) => {
     const keyRaw = process.env.GA4_SERVICE_ACCOUNT_KEY;
     if (!keyRaw) throw new Error('GA4_SERVICE_ACCOUNT_KEY env var not set');
     const serviceAccount = JSON.parse(keyRaw);
-    const { report = 'screen_views', startDate = '30daysAgo', endDate = 'today' } = event.queryStringParameters || {};
+    const { report = 'screen_views', startDate = '30daysAgo', endDate = 'today', hotelId } = event.queryStringParameters || {};
     const token = await getAccessToken(serviceAccount);
-    const body = buildReportBody(report, startDate, endDate);
+    let body = buildReportBody(report, startDate, endDate);
+
+    // Apply hotel_id filter if specified
+    if (hotelId) {
+      const hotelFilter = { filter: { fieldName: 'customEvent:hotel_id', stringFilter: { value: hotelId } } };
+      if (body.dimensionFilter) {
+        body.dimensionFilter = { andGroup: { expressions: [body.dimensionFilter, hotelFilter] } };
+      } else {
+        body.dimensionFilter = hotelFilter;
+      }
+    }
+
     const data = await runReport(token, body);
     return { statusCode: 200, headers, body: JSON.stringify(data) };
   } catch (err) {

@@ -4382,8 +4382,7 @@ async function aaFetch(report) {
   const key = `${report}:${aaStartDate}:${aaEndDate}:${aaHotelId}`;
   if (aaCache[key]) return aaCache[key];
   let url = `${AA_FN}?report=${report}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
-  // Note: hotel filter via dimensionFilter would require server-side support
-  // For now hotel filter is noted — full support needs ga4.js update
+  if (aaHotelId) url += `&hotelId=${aaHotelId}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${report} failed: ${res.status}`);
   const data = await res.json();
@@ -4481,40 +4480,46 @@ function aaRenderFunnel(data) {
   const convRate = Math.round(completes / starts * 100);
   const dropRate = Math.round(abandoned / starts * 100);
 
-  // Dept breakdown (will mostly show (not set) until engineering fixes source_module)
   const deptStarts = {};
   rows.filter(r => r.eventName === 'booking_start').forEach(r => {
     const dept = r['customEvent:source_module'] || '(not set)';
     deptStarts[dept] = (deptStarts[dept] || 0) + r.eventCount;
   });
-  const topDepts = Object.entries(deptStarts).sort((a,b) => b[1]-a[1]).slice(0,5);
+  const topDepts = Object.entries(deptStarts).sort((a,b) => b[1]-a[1]).slice(0,6);
   const DEPT_NAMES = { dining:'IRD', spa:'SPA', bms_spa:'SPA (BMS)', activity:'Activity', restaurant:'Restaurant', taxi:'Taxi', housekeeping:'Housekeeping', laundry:'Laundry', store:'Store' };
 
+  // Clean horizontal funnel — no absolute positioning, no overflow
+  const steps = [
+    { label: 'Started', val: starts, pct: '100%', color: 'var(--blue)', note: '' },
+    { label: 'Abandoned', val: abandoned, pct: `${dropRate}%`, color: 'var(--amber)', note: `${dropRate}% of starters left` },
+    { label: 'Completed', val: completes, pct: `${convRate}%`, color: convRate>=20?'var(--teal)':'var(--red)', note: `${convRate}% conversion` },
+  ];
+
   document.getElementById('aa-funnel-body').innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
       <div>
-        <div class="fu-funnel" style="height:130px">
-          <div class="fu-funnel-step">
-            <div class="fu-funnel-bar-wrap"><div class="fu-funnel-bar" style="height:120px;background:var(--blue)"></div></div>
-            <div class="fu-funnel-meta"><div class="fu-funnel-label2">Started</div><div class="fu-funnel-num">${starts.toLocaleString()}</div><div class="fu-funnel-rate" style="color:var(--text3)">100%</div></div>
-            <div class="fu-funnel-arrow">→</div>
-          </div>
-          <div class="fu-funnel-step">
-            <div class="fu-funnel-bar-wrap"><div class="fu-funnel-bar" style="height:${Math.max(6,Math.round(abandoned/starts*120))}px;background:var(--amber)"></div></div>
-            <div class="fu-funnel-meta"><div class="fu-funnel-label2">Abandoned</div><div class="fu-funnel-num">${abandoned.toLocaleString()}</div><div class="fu-funnel-rate" style="color:var(--amber)">${dropRate}%</div></div>
-            <div class="fu-funnel-arrow">→</div>
-          </div>
-          <div class="fu-funnel-step">
-            <div class="fu-funnel-bar-wrap"><div class="fu-funnel-bar" style="height:${Math.max(6,Math.round(completes/starts*120))}px;background:var(--teal)"></div></div>
-            <div class="fu-funnel-meta"><div class="fu-funnel-label2">Completed</div><div class="fu-funnel-num">${completes.toLocaleString()}</div><div class="fu-funnel-rate" style="color:${convRate>=20?'var(--teal)':'var(--red)'}">${convRate}%</div></div>
-          </div>
+        <div style="display:flex;gap:8px;margin-bottom:16px;align-items:flex-end;height:100px">
+          ${steps.map((s, i) => {
+            const h = Math.max(8, Math.round(s.val / starts * 90));
+            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:0">
+              <div style="width:100%;height:${h}px;background:${s.color};border-radius:3px 3px 0 0;margin-top:${90-h}px"></div>
+            </div>${i < steps.length-1 ? '<div style="flex:0 0 8px;display:flex;align-items:flex-end;padding-bottom:4px;color:var(--text3);font-size:12px">→</div>' : ''}`;
+          }).join('')}
         </div>
-        <div style="font-size:11px;color:var(--text2);line-height:1.6;margin-top:10px">
-          ${convRate < 20 ? `⚠ <strong>${convRate}% conversion</strong> is below the 20% benchmark. More guests abandon than complete.` : `✓ <strong>${convRate}% conversion</strong> is above benchmark.`}
+        <div style="display:flex;gap:8px">
+          ${steps.map(s => `<div style="flex:1;text-align:center">
+            <div style="font-size:13px;font-weight:600;font-family:var(--serif)">${s.val.toLocaleString()}</div>
+            <div style="font-size:9px;color:var(--text3);margin-top:2px">${s.label}</div>
+            <div style="font-size:9px;font-weight:500;color:${s.color};margin-top:1px">${s.pct}</div>
+          </div>`).join('<div style="flex:0 0 8px"></div>')}
+        </div>
+        <div style="font-size:11px;color:var(--text2);line-height:1.6;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+          ${convRate < 20 ? `⚠ <strong>${convRate}% conversion</strong> is below the 20% benchmark.` : `✓ <strong>${convRate}% conversion</strong> is above benchmark.`}
+          ${abandoned > completes ? ` More guests abandon (${abandoned.toLocaleString()}) than complete (${completes.toLocaleString()}).` : ''}
         </div>
       </div>
       <div>
-        <div class="sec-lbl" style="margin-bottom:8px">Starts by department</div>
+        <div class="sec-lbl" style="margin-bottom:10px">Booking starts by department</div>
         ${topDepts.map(([dept, count]) => `
           <div class="fu-bar-row">
             <div class="fu-bar-label">${DEPT_NAMES[dept] || dept}</div>
@@ -4522,7 +4527,7 @@ function aaRenderFunnel(data) {
             <div class="fu-bar-val">${count.toLocaleString()}</div>
             <div class="fu-bar-pct">${Math.round(count/starts*100)}%</div>
           </div>`).join('')}
-        ${deptStarts['(not set)'] ? `<div style="font-size:9px;color:var(--amber);margin-top:8px">⚠ ${Math.round((deptStarts['(not set)']/starts)*100)}% of starts have no dept — source_module fix needed from engineering.</div>` : ''}
+        ${deptStarts['(not set)'] ? `<div style="font-size:9px;color:var(--amber);margin-top:10px">⚠ ${Math.round((deptStarts['(not set)']/starts)*100)}% of starts have no dept — awaiting engineering fix.</div>` : ''}
       </div>
     </div>`;
 }
