@@ -4374,7 +4374,7 @@ const DEPT_CONFIG = {
   restaurant:  { report: 'restaurant',   screens: ['Landing (/restaurant)', 'Booking (/restaurant/booking)'], hasFunnel: true },
   taxi:        { report: 'taxi',         screens: ['Taxi (/taxi)'], hasFunnel: true },
   housekeeping:{ report: 'housekeeping', screens: ['Housekeeping (/housekeeping)', 'Laundry (/laundry)'], hasFunnel: true },
-  store:       { report: 'store',        screens: ['Browse (/store)', 'Product detail'], hasFunnel: false },
+  store:       { report: 'store',        screens: ['Browse (/store)', 'Product detail'], hasFunnel: true, customFunnel: true },
   chat:        { report: 'chat',         screens: ['Chat (/chat)'], hasFunnel: false },
   home:        { report: 'home',         screens: ['Home (/home)'], hasFunnel: false },
 };
@@ -4602,13 +4602,13 @@ async function aaToggleDept(dept) {
     const cfg = DEPT_CONFIG[dept];
     const data = await aaFetch(cfg.report);
     const rows = aaRows(data);
-    aaRenderDeptBody(dept, rows, cfg);
+    await aaRenderDeptBody(dept, rows, cfg);
   } catch(e) {
     body.innerHTML = `<div style="font-size:11px;color:var(--red)">⚠ ${e.message}</div>`;
   }
 }
 
-function aaRenderDeptBody(dept, rows, cfg) {
+async function aaRenderDeptBody(dept, rows, cfg) {
   const body = document.getElementById(`aa-body-${dept}`);
   if (!rows.length) {
     body.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:12px 0">No data for this department in the selected period.</div>`;
@@ -4721,6 +4721,151 @@ function aaRenderDeptBody(dept, rows, cfg) {
     }
   }
 
+  // ── Custom Store Funnel ────────────────────────────────────────────────────
+  if (dept === 'store') {
+    // Stitch funnel from multiple data sources
+    const labelK = rows[0]?.['customEvent:label'] !== undefined ? 'customEvent:label' : 'label';
+    const valueK = rows[0]?.['customEvent:value'] !== undefined ? 'customEvent:value' : 'value';
+    const eventK = rows[0]?.eventName !== undefined ? 'eventName' : null;
+
+    // Screen views for /store
+    let storeViews = 0;
+    try {
+      const svData = await aaFetch('screen_views');
+      const svRows = aaRows(svData);
+      storeViews = svRows.filter(r => {
+        const s = (r.unifiedScreenName || '').toLowerCase();
+        return s.includes('/store') || s === 'store';
+      }).reduce((a, r) => a + (r.screenPageViews || 0), 0);
+    } catch(e) { /* screen_views may already be cached */ }
+
+    // Click events from store report rows
+    const catSelections = rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'category_selection')
+      .reduce((a, r) => a + r.eventCount, 0);
+    const subcatTaps = rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'subcategory_tap')
+      .reduce((a, r) => a + r.eventCount, 0);
+    const productViews = rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'product_view')
+      .reduce((a, r) => a + r.eventCount, 0);
+    const specialInstr = rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'special_instructions_modal_button')
+      .reduce((a, r) => a + r.eventCount, 0);
+    const cartAdds = rows.filter(r => (eventK ? r[eventK] : '') === 'store_item_added_to_cart')
+      .reduce((a, r) => a + r.eventCount, 0);
+    const bookStarts = rows.filter(r => (eventK ? r[eventK] : '') === 'booking_start')
+      .reduce((a, r) => a + r.eventCount, 0);
+    const bookComplete = rows.filter(r => (eventK ? r[eventK] : '') === 'booking_complete')
+      .reduce((a, r) => a + r.eventCount, 0);
+    const bookAbandoned = rows.filter(r => (eventK ? r[eventK] : '') === 'booking_abandoned')
+      .reduce((a, r) => a + r.eventCount, 0);
+
+    // Product-level conversion table
+    const productViewCounts = {};
+    rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'product_view').forEach(r => {
+      const name = r[valueK] || '(unknown)';
+      productViewCounts[name] = (productViewCounts[name] || 0) + r.eventCount;
+    });
+    const cartItemCounts = {};
+    rows.filter(r => (eventK ? r[eventK] : '') === 'store_item_added_to_cart').forEach(r => {
+      const name = r[valueK] || r[labelK] || '(unknown)';
+      cartItemCounts[name] = (cartItemCounts[name] || 0) + r.eventCount;
+    });
+    // Merge into product table
+    const allProducts = new Set([...Object.keys(productViewCounts), ...Object.keys(cartItemCounts)]);
+    const productTable = [...allProducts].map(name => ({
+      name,
+      views: productViewCounts[name] || 0,
+      carts: cartItemCounts[name] || 0,
+      conv: productViewCounts[name] > 0 ? Math.round(cartItemCounts[name] || 0) / productViewCounts[name] * 100 : 0,
+    })).sort((a, b) => b.views - a.views);
+
+    // Category breakdown
+    const catCounts = {};
+    rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'category_selection').forEach(r => {
+      const cat = r[valueK] || '(unknown)';
+      catCounts[cat] = (catCounts[cat] || 0) + r.eventCount;
+    });
+    const sortedCats = Object.entries(catCounts).sort((a, b) => b[1] - a[1]);
+    const maxCat = sortedCats[0]?.[1] || 1;
+
+    // Home exits
+    const homeExits = rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'top_navigation')
+      .reduce((a, r) => a + r.eventCount, 0);
+
+    // Build funnel steps
+    const steps = [
+      { label: 'Store opened', count: storeViews, color: 'var(--blue)', icon: '🏪' },
+      { label: 'Category browsed', count: catSelections, color: 'var(--blue)', icon: '📂' },
+      { label: 'Product viewed', count: productViews, color: 'var(--blue)', icon: '👁' },
+      { label: 'Added to cart', count: cartAdds, color: 'var(--amber)', icon: '🛒' },
+      { label: 'Booking started', count: bookStarts, color: 'var(--amber)', icon: '📋' },
+      { label: 'Order completed', count: bookComplete, color: 'var(--teal)', icon: '✅' },
+    ];
+    const maxCount = Math.max(...steps.map(s => s.count), 1);
+
+    richHTML += `
+      <div style="margin-bottom:20px">
+        <div class="sec-lbl" style="margin-bottom:12px">Store purchase funnel · stitched from click_events + booking events</div>
+        <div style="display:flex;gap:2px;align-items:flex-end;height:120px;margin-bottom:8px">
+          ${steps.map((s, i) => {
+            const h = Math.max(6, Math.round(s.count / maxCount * 110));
+            const conv = i > 0 && steps[i-1].count > 0 ? (s.count / steps[i-1].count * 100).toFixed(1) : null;
+            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center">
+              <div style="font-size:9px;color:var(--text3);margin-bottom:2px">${conv !== null ? conv + '%' : ''}</div>
+              <div style="width:100%;height:${h}px;background:${s.color};border-radius:3px 3px 0 0;margin-top:${110-h}px;opacity:${0.5 + (i === 0 ? 0.5 : (s.count/maxCount)*0.5)}"></div>
+            </div>`;
+          }).join('<div style="flex:0 0 1px;display:flex;align-items:center;color:var(--text3);font-size:10px;padding-bottom:20px">›</div>')}
+        </div>
+        <div style="display:flex;gap:2px">
+          ${steps.map((s, i) => {
+            const conv = i > 0 && steps[i-1].count > 0 ? (s.count / steps[i-1].count * 100).toFixed(1) : null;
+            const drop = conv !== null ? (100 - parseFloat(conv)).toFixed(1) : null;
+            const isBigDrop = drop !== null && parseFloat(drop) > 70;
+            return `<div style="flex:1;text-align:center">
+              <div style="font-size:12px;font-weight:600;font-family:var(--serif)">${s.count.toLocaleString()}</div>
+              <div style="font-size:8px;color:var(--text3);margin-top:2px">${s.icon} ${s.label}</div>
+              ${isBigDrop ? `<div style="font-size:8px;color:var(--red);font-weight:600;margin-top:2px">⚠ ${drop}% drop</div>` : ''}
+            </div>`;
+          }).join('<div style="flex:0 0 1px"></div>')}
+        </div>
+      </div>
+
+      ${homeExits > 0 ? `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:8px 12px;margin-bottom:16px;font-size:11px;color:var(--amber-d)">
+        🚪 <strong>${homeExits} home-button exits</strong> (${storeViews > 0 ? Math.round(homeExits/storeViews*100) : '?'}% of store visitors) — guests leaving via top navigation without buying.
+      </div>` : ''}
+
+      <div style="margin-bottom:20px">
+        <div class="sec-lbl" style="margin-bottom:8px">Category interest (${sortedCats.reduce((a,[,c])=>a+c,0)} total selections)</div>
+        ${sortedCats.map(([cat, count]) => `
+          <div class="fu-bar-row">
+            <div class="fu-bar-label" style="font-size:11px">${cat}</div>
+            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/maxCat*100)}%;background:var(--blue)"></div></div>
+            <div class="fu-bar-val">${count.toLocaleString()}</div>
+            <div class="fu-bar-pct">${Math.round(count/catSelections*100)}%</div>
+          </div>`).join('')}
+      </div>
+
+      <div style="margin-bottom:20px">
+        <div class="sec-lbl" style="margin-bottom:8px">Product conversion · view → add to cart</div>
+        <div style="max-height:300px;overflow-y:auto">
+          <table style="width:100%;font-size:11px;border-collapse:collapse">
+            <tr style="background:var(--bg2);position:sticky;top:0">
+              <th style="text-align:left;padding:6px 8px;font-weight:600">Product</th>
+              <th style="text-align:right;padding:6px 8px;font-weight:600">Views</th>
+              <th style="text-align:right;padding:6px 8px;font-weight:600">Cart adds</th>
+              <th style="text-align:right;padding:6px 8px;font-weight:600">Conv%</th>
+            </tr>
+            ${productTable.slice(0, 20).map(p => `
+              <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:5px 8px;color:var(--text1)">${p.name}</td>
+                <td style="text-align:right;padding:5px 8px">${p.views}</td>
+                <td style="text-align:right;padding:5px 8px;${p.carts > 0 ? 'color:var(--teal);font-weight:600' : 'color:var(--text3)'}">${p.carts}</td>
+                <td style="text-align:right;padding:5px 8px;${p.conv > 15 ? 'color:var(--teal);font-weight:600' : p.conv > 0 ? 'color:var(--amber)' : 'color:var(--text3)'}">${p.conv > 0 ? p.conv.toFixed(0) + '%' : '—'}</td>
+              </tr>`).join('')}
+          </table>
+        </div>
+        ${specialInstr > 0 ? `<div style="font-size:10px;color:var(--text2);margin-top:8px">ℹ ${specialInstr} "special instructions" saves — guests who reached the customization step.</div>` : ''}
+      </div>`;
+  }
+
   // Dept-specific funnel steps built from click_event labels + booking events
   // ── All interactions — grouped by label, expandable ──────────────────────
   const labelKey = rows[0]['customEvent:label'] !== undefined ? 'customEvent:label' : 'label';
@@ -4789,7 +4934,7 @@ function aaRenderDeptBody(dept, rows, cfg) {
     taxi: `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Taxi has dedicated events (blue label): taxi_time_selected and taxi_vehicle_selected — richer than just booking_complete.</div>`,
     housekeeping: `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Laundry order total is always 0 (app bug). Housekeeping fires an <code>order</code> event with real value when request is placed.</div>`,
     spa: `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Casa Cook SPA closed Jun 1 – Oct 15. Data is pre-closure. BMS SPA (Chedi only) may show separately. Instrument before reopening.</div>`,
-    store: `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Store is Chedi-only. store_item_added_to_cart fires with item name + price. "You may also like" on product detail is not yet tracked.</div>`,
+    store: `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Store is Chedi-only. store_item_added_to_cart fires with item name + price. "You may also like" on product detail is not yet tracked.</div><div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ <strong>Data quality warning:</strong> No internal-user filter exists. Numbers may include engineering/product testing on production. With only ~2 completed orders in 90 days, even 1 test order skews conversion by 50%. <strong>Action needed:</strong> Ask engineering to add an <code>is_internal</code> user property to test accounts.</div>`,
   };
 
   body.innerHTML = (NOTES[dept] || '') + richHTML + interactionsHTML;
