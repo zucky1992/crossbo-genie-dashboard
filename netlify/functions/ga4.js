@@ -36,13 +36,19 @@ async function getAccessToken(serviceAccount) {
   return data.access_token;
 }
 
-async function runReport(token, body) {
+async function runReport(token, body, retries = 2) {
   const res = await fetch(`${GA4_API_BASE}/properties/${GA4_PROPERTY_ID}:runReport`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) { const err = await res.text(); throw new Error(`GA4 API error: ${err}`); }
+  if (res.status === 429 && retries > 0) {
+    // Rate limited — wait and retry
+    const wait = (3 - retries) * 2000 + 1000; // 1s, 3s
+    await new Promise(r => setTimeout(r, wait));
+    return runReport(token, body, retries - 1);
+  }
+  if (!res.ok) { const err = await res.text(); throw new Error(`GA4 API error (${res.status}): ${err}`); }
   return res.json();
 }
 
@@ -487,25 +493,16 @@ exports.handler = async (event) => {
       data = await runReport(token, body);
     } catch (reportErr) {
       // If excludeTest filter caused the error (dimension not registered yet), retry without it
-      if (excludeTest === 'true' && reportErr.message.includes('customUser:environment')) {
-        console.warn('customUser:environment not registered yet — retrying without test filter');
-        // Rebuild without the environment filter
+      if (excludeTest === 'true' && (reportErr.message.includes('customUser:environment') || reportErr.message.includes('customUser:property'))) {
+        console.warn('User-scoped dimension not available yet — retrying without filter');
         body = buildReportBody(report, startDate, endDate);
-        // Re-apply hotel filters only
-        if (hotelId) {
-          const hf = { filter: { fieldName: 'customEvent:hotel_id', stringFilter: { value: hotelId } } };
-          body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, hf] } } : hf;
-        }
-        if (hotelName) {
-          const nf = { filter: { fieldName: 'customUser:property', stringFilter: { value: hotelName } } };
-          body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, nf] } } : nf;
-        }
+        // Only re-apply appVersion filter (skip user-scoped filters that caused the error)
         if (appVersion) {
           const vf = { filter: { fieldName: 'appVersion', stringFilter: { value: appVersion } } };
           body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, vf] } } : vf;
         }
         data = await runReport(token, body);
-        data._testFilterSkipped = true; // Signal to dashboard
+        data._testFilterSkipped = true;
       } else {
         throw reportErr;
       }

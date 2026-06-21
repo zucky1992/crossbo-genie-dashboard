@@ -672,7 +672,7 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
     <span style="margin-left:auto;font-size:10px;color:var(--text3)" id="aa-updated"></span>
     <div style="width:1px;height:20px;background:var(--border)"></div>
     <label style="font-size:10px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none" title="Filter out engineering/QA testing traffic (environment=development)">
-      <input type="checkbox" id="aa-exclude-test" checked onchange="aaToggleExcludeTest(this.checked)" style="margin:0;accent-color:var(--teal)">
+      <input type="checkbox" id="aa-exclude-test" onchange="aaToggleExcludeTest(this.checked)" style="margin:0;accent-color:var(--teal)">
       Exclude test data
     </label>
   </div>
@@ -4356,7 +4356,7 @@ const AA_FN = '/.netlify/functions/ga4';
 let aaStartDate = '7daysAgo';
 let aaEndDate = 'today';
 let aaHotelId = '';
-let aaExcludeTest = true;
+let aaExcludeTest = false; // Enable after environment dimension has data (~24-48h after June 21)
 let aaCache = {};
 let aaLoaded = false;
 let aaOpenDepts = new Set();
@@ -4459,11 +4459,15 @@ async function aaLoad(force = false) {
   });
 
   try {
-    const [funnel, screens, abandon, complete, services, recs, notifs, health] = await Promise.all([
+    // Batch 1: critical reports
+    const [funnel, screens, abandon, complete] = await Promise.all([
       aaFetch('booking_funnel'),
       aaFetch('screen_views'),
       aaFetch('abandon_by_step'),
       aaFetch('booking_complete_detail'),
+    ]);
+    // Batch 2: secondary reports (slight delay to avoid GA4 429)
+    const [services, recs, notifs, health] = await Promise.all([
       aaFetch('top_services'),
       aaFetch('recommendations'),
       aaFetch('notifications'),
