@@ -1,11 +1,16 @@
 /**
- * Netlify Function: ga4.js v3
+ * Netlify Function: ga4.js v4
  * Full event inventory + rich dimension queries using all 35 registered custom dimensions.
+ * Server-side cache (5-min TTL) to reduce GA4 API calls and avoid 429 rate limits.
  */
 
 const GA4_PROPERTY_ID = '503373961';
 const GA4_API_BASE = 'https://analyticsdata.googleapis.com/v1beta';
 const TOKEN_URI = 'https://oauth2.googleapis.com/token';
+
+// In-memory cache — survives across warm invocations of the same Netlify Function instance
+const _cache = {};
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 function base64url(buf) {
   return Buffer.from(buf).toString('base64')
@@ -442,6 +447,13 @@ exports.handler = async (event) => {
     if (!keyRaw) throw new Error('GA4_SERVICE_ACCOUNT_KEY env var not set');
     const serviceAccount = JSON.parse(keyRaw);
     const { report = 'screen_views', startDate = '30daysAgo', endDate = 'today', hotelId, hotelName, excludeTest = 'true', appVersion } = event.queryStringParameters || {};
+
+    // Check server-side cache first
+    const cacheKey = `${report}:${startDate}:${endDate}:${hotelId||''}:${hotelName||''}:${excludeTest}:${appVersion||''}`;
+    if (_cache[cacheKey] && Date.now() - _cache[cacheKey].ts < CACHE_TTL) {
+      return { statusCode: 200, headers, body: JSON.stringify(_cache[cacheKey].data) };
+    }
+
     const token = await getAccessToken(serviceAccount);
     let body = buildReportBody(report, startDate, endDate);
 
@@ -505,6 +517,8 @@ exports.handler = async (event) => {
         throw reportErr;
       }
     }
+    // Cache successful response
+    _cache[cacheKey] = { data, ts: Date.now() };
     return { statusCode: 200, headers, body: JSON.stringify(data) };
   } catch (err) {
     console.error('GA4 function error:', err);

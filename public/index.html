@@ -4468,19 +4468,19 @@ async function aaLoad(force = false) {
     };
 
     const funnel = await safeFetch('booking_funnel');
-    await delay(500);
+    await delay(1000);
     const screens = await safeFetch('screen_views');
-    await delay(500);
+    await delay(1000);
     const abandon = await safeFetch('abandon_by_step');
-    await delay(500);
+    await delay(1000);
     const complete = await safeFetch('booking_complete_detail');
-    await delay(500);
+    await delay(1000);
     const services = await safeFetch('top_services');
-    await delay(500);
+    await delay(1000);
     const recs = await safeFetch('recommendations');
-    await delay(500);
+    await delay(1000);
     const notifs = await safeFetch('notifications');
-    await delay(500);
+    await delay(1000);
     const health = await safeFetch('app_health');
 
     const failed = [
