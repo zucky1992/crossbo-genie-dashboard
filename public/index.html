@@ -4390,19 +4390,19 @@ function aaSetRange(el) {
   el.classList.add('on');
   aaStartDate = el.dataset.start;
   aaEndDate = el.dataset.end;
-  aaCache = {}; aaLoaded = false; aaOpenDepts.clear();
+  aaCache = {}; aaLoaded = false; aaOpenDepts.clear(); aaCompleteData = null; aaServicesData = null;
   aaLoad(true);
 }
 
 function aaSetHotel(val) {
   aaHotelId = val;
-  aaCache = {}; aaLoaded = false; aaOpenDepts.clear();
+  aaCache = {}; aaLoaded = false; aaOpenDepts.clear(); aaCompleteData = null; aaServicesData = null;
   aaLoad(true);
 }
 
 function aaToggleExcludeTest(checked) {
   aaExcludeTest = checked;
-  aaCache = {}; aaLoaded = false; aaOpenDepts.clear();
+  aaCache = {}; aaLoaded = false; aaOpenDepts.clear(); aaCompleteData = null; aaServicesData = null;
   aaLoad(true);
 }
 
@@ -4459,8 +4459,9 @@ async function aaLoad(force = false) {
   });
 
   try {
-    // Single batch call — all 8 reports in 2 GA4 API requests (5+3) via server-side batching
-    const batchReports = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,top_services,recommendations,notifications,app_health';
+    // Initial batch: 6 core reports (2 batch calls of 3+3 = 2 GA4 API hits)
+    // booking_complete_detail + top_services loaded lazily when dept cards expand
+    const batchReports = 'booking_funnel,screen_views,abandon_by_step,recommendations,notifications,app_health';
     let batchUrl = `${AA_FN}?reports=${batchReports}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
     if (aaHotelId) batchUrl += `&hotelId=${aaHotelId}`;
     if (aaExcludeTest) batchUrl += `&excludeTest=true`;
@@ -4474,8 +4475,8 @@ async function aaLoad(force = false) {
     const funnel = batchData.booking_funnel || null;
     const screens = batchData.screen_views || null;
     const abandon = batchData.abandon_by_step || null;
-    const complete = batchData.booking_complete_detail || null;
-    const services = batchData.top_services || null;
+    const complete = null; // Loaded lazily when dept card expands
+    const services = null; // Loaded lazily when dept card expands
     const recs = batchData.recommendations || null;
     const notifs = batchData.notifications || null;
     const health = batchData.app_health || null;
@@ -4630,6 +4631,14 @@ async function aaToggleDept(dept) {
   aaOpenDepts.add(dept + '_loaded');
 
   try {
+    // Lazy-load booking_complete_detail + top_services on first dept expansion
+    if (!aaCompleteData) {
+      try { aaCompleteData = await aaFetch('booking_complete_detail'); } catch(e) { console.warn('booking_complete_detail:', e.message); }
+    }
+    if (!aaServicesData) {
+      try { aaServicesData = await aaFetch('top_services'); } catch(e) { console.warn('top_services:', e.message); }
+    }
+
     const cfg = DEPT_CONFIG[dept];
     const data = await aaFetch(cfg.report);
     const rows = aaRows(data);
