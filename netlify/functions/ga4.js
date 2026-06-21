@@ -445,8 +445,46 @@ exports.handler = async (event) => {
     const keyRaw = process.env.GA4_SERVICE_ACCOUNT_KEY;
     if (!keyRaw) throw new Error('GA4_SERVICE_ACCOUNT_KEY env var not set');
     const serviceAccount = JSON.parse(keyRaw);
-    const { report = 'screen_views', startDate = '30daysAgo', endDate = 'today', hotelId, excludeTest = 'false' } = event.queryStringParameters || {};
+    const { report = 'screen_views', startDate = '30daysAgo', endDate = 'today', hotelId, excludeTest = 'false', multi } = event.queryStringParameters || {};
 
+    // Shared filter application
+    function applyFilters(body) {
+      if (hotelId) {
+        const hf = { filter: { fieldName: 'customEvent:hotel_id', stringFilter: { value: hotelId } } };
+        body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, hf] } } : hf;
+      }
+      if (excludeTest === 'true') {
+        const ef = { notExpression: { filter: { fieldName: 'customUser:environment', stringFilter: { value: 'development' } } } };
+        body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, ef] } } : ef;
+      }
+      return body;
+    }
+
+    // ── MULTI MODE: fetch several reports SEQUENTIALLY in one call ──
+    // Sequential = max 1 concurrent GA4 request per invocation, avoiding the
+    // 10-concurrent-request limit that causes 429s on parallel bursts.
+    if (multi) {
+      const names = multi.split(',').map(s => s.trim()).filter(Boolean);
+      const cacheKey = `multi:${names.join(',')}:${startDate}:${endDate}:${hotelId||''}:${excludeTest}`;
+      if (_cache[cacheKey] && Date.now() - _cache[cacheKey].ts < CACHE_TTL) {
+        return { statusCode: 200, headers, body: JSON.stringify(_cache[cacheKey].data) };
+      }
+
+      const token = await getAccessToken(serviceAccount);
+      const result = {};
+      for (const name of names) {
+        try {
+          const body = applyFilters(buildReportBody(name, startDate, endDate));
+          result[name] = await runReport(token, body, 0); // no per-report retry (keep within timeout)
+        } catch (e) {
+          result[name] = { error: e.message, rows: [] };
+        }
+      }
+      _cache[cacheKey] = { data: result, ts: Date.now() };
+      return { statusCode: 200, headers, body: JSON.stringify(result) };
+    }
+
+    // ── SINGLE REPORT MODE ──
     // Server-side cache — avoids hitting GA4 on page refresh
     const cacheKey = `${report}:${startDate}:${endDate}:${hotelId||''}:${excludeTest}`;
     if (_cache[cacheKey] && Date.now() - _cache[cacheKey].ts < CACHE_TTL) {
@@ -454,27 +492,7 @@ exports.handler = async (event) => {
     }
 
     const token = await getAccessToken(serviceAccount);
-    let body = buildReportBody(report, startDate, endDate);
-
-    // Apply hotel_id filter if specified
-    if (hotelId) {
-      const hotelFilter = { filter: { fieldName: 'customEvent:hotel_id', stringFilter: { value: hotelId } } };
-      if (body.dimensionFilter) {
-        body.dimensionFilter = { andGroup: { expressions: [body.dimensionFilter, hotelFilter] } };
-      } else {
-        body.dimensionFilter = hotelFilter;
-      }
-    }
-
-    // Exclude development/test traffic (only when explicitly enabled)
-    if (excludeTest === 'true') {
-      const envFilter = { notExpression: { filter: { fieldName: 'customUser:environment', stringFilter: { value: 'development' } } } };
-      if (body.dimensionFilter) {
-        body.dimensionFilter = { andGroup: { expressions: [body.dimensionFilter, envFilter] } };
-      } else {
-        body.dimensionFilter = envFilter;
-      }
-    }
+    let body = applyFilters(buildReportBody(report, startDate, endDate));
 
     const data = await runReport(token, body);
     _cache[cacheKey] = { data, ts: Date.now() };

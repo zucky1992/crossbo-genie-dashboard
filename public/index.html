@@ -4458,16 +4458,40 @@ async function aaLoad(force = false) {
   });
 
   try {
-    const [funnel, screens, abandon, complete, services, recs, notifs, health] = await Promise.all([
-      aaFetch('booking_funnel'),
-      aaFetch('screen_views'),
-      aaFetch('abandon_by_step'),
-      aaFetch('booking_complete_detail'),
-      aaFetch('top_services'),
-      aaFetch('recommendations'),
-      aaFetch('notifications'),
-      aaFetch('app_health'),
-    ]);
+    // Single multi-call: all 8 reports fetched SEQUENTIALLY server-side in one
+    // request. Bounds GA4 concurrency to 1 per call, avoiding 429 rate limits.
+    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,top_services,recommendations,notifications,app_health';
+    let multiUrl = `${AA_FN}?multi=${reportList}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
+    if (aaHotelId) multiUrl += `&hotelId=${aaHotelId}`;
+    if (aaExcludeTest) multiUrl += `&excludeTest=true`;
+
+    const multiRes = await fetch(multiUrl);
+    if (!multiRes.ok) throw new Error(`Load failed: ${multiRes.status}`);
+    const md = await multiRes.json();
+    if (md.error) throw new Error(md.error);
+
+    const funnel = md.booking_funnel || { rows: [] };
+    const screens = md.screen_views || { rows: [] };
+    const abandon = md.abandon_by_step || { rows: [] };
+    const complete = md.booking_complete_detail || { rows: [] };
+    const services = md.top_services || { rows: [] };
+    const recs = md.recommendations || { rows: [] };
+    const notifs = md.notifications || { rows: [] };
+    const health = md.app_health || { rows: [] };
+
+    // Populate client cache so dept-card lazy loads (e.g. Store funnel reusing
+    // screen_views) don't re-hit the API.
+    const ck = (r) => `${r}:${aaStartDate}:${aaEndDate}:${aaHotelId}:${aaExcludeTest}`;
+    aaCache[ck('booking_funnel')] = funnel;
+    aaCache[ck('screen_views')] = screens;
+    aaCache[ck('abandon_by_step')] = abandon;
+    aaCache[ck('booking_complete_detail')] = complete;
+    aaCache[ck('top_services')] = services;
+    aaCache[ck('recommendations')] = recs;
+    aaCache[ck('notifications')] = notifs;
+    aaCache[ck('app_health')] = health;
+
+    const anyFailed = Object.values(md).some(v => v && v.error);
 
     aaFunnelData = funnel;
     aaAbandonData = abandon;
