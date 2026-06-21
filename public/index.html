@@ -4459,39 +4459,57 @@ async function aaLoad(force = false) {
   });
 
   try {
-    // Sequential loading to avoid GA4 API 429 rate limits
+    // Sequential loading with delays to stay within GA4 API rate limits
+    // GA4 allows ~10 requests/minute for free-tier properties
     const delay = (ms) => new Promise(r => setTimeout(r, ms));
-    const funnel = await aaFetch('booking_funnel');
-    const screens = await aaFetch('screen_views');
-    await delay(300);
-    const abandon = await aaFetch('abandon_by_step');
-    const complete = await aaFetch('booking_complete_detail');
-    await delay(300);
-    const services = await aaFetch('top_services');
-    const recs = await aaFetch('recommendations');
-    await delay(300);
-    const notifs = await aaFetch('notifications');
-    const health = await aaFetch('app_health');
+    const safeFetch = async (report) => {
+      try { return await aaFetch(report); }
+      catch(e) { console.warn(`${report} failed: ${e.message}`); return null; }
+    };
+
+    const funnel = await safeFetch('booking_funnel');
+    await delay(500);
+    const screens = await safeFetch('screen_views');
+    await delay(500);
+    const abandon = await safeFetch('abandon_by_step');
+    await delay(500);
+    const complete = await safeFetch('booking_complete_detail');
+    await delay(500);
+    const services = await safeFetch('top_services');
+    await delay(500);
+    const recs = await safeFetch('recommendations');
+    await delay(500);
+    const notifs = await safeFetch('notifications');
+    await delay(500);
+    const health = await safeFetch('app_health');
+
+    const failed = [
+      !funnel && 'booking_funnel', !screens && 'screen_views', !abandon && 'abandon_by_step',
+      !complete && 'booking_complete_detail', !services && 'top_services', !recs && 'recommendations',
+      !notifs && 'notifications', !health && 'app_health'
+    ].filter(Boolean);
 
     aaFunnelData = funnel;
     aaAbandonData = abandon;
     aaCompleteData = complete;
     aaServicesData = services;
 
-    aaRenderKPIs(funnel, screens, health);
-    aaRenderFunnel(funnel);
-    aaRenderDeptPills(funnel, screens);
-    aaRenderRecs(recs);
-    aaRenderNotifications(notifs);
-    aaRenderAppHealth(health, screens);
+    if (funnel) { aaRenderKPIs(funnel, screens, health); aaRenderFunnel(funnel); aaRenderDeptPills(funnel, screens); }
+    else { document.getElementById('aa-kpis').innerHTML = '<div style="font-size:11px;color:var(--amber);padding:8px">⚠ KPIs unavailable — GA4 rate limit. Wait 1 min and click Refresh.</div>'; }
+    if (recs) aaRenderRecs(recs);
+    if (notifs) aaRenderNotifications(notifs);
+    if (health && screens) aaRenderAppHealth(health, screens);
 
     const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    const testSkipped = funnel._testFilterSkipped || screens._testFilterSkipped;
+    const testSkipped = funnel?._testFilterSkipped || screens?._testFilterSkipped;
     const updEl = document.getElementById('aa-updated');
-    if (updEl) updEl.textContent = `Updated ${now} · GA4 data reflects last 24–48h${testSkipped ? ' · ⚠ test filter inactive' : ''}`;
+    if (updEl) updEl.textContent = `Updated ${now} · GA4 data reflects last 24–48h${testSkipped ? ' · ⚠ test filter inactive' : ''}${failed.length ? ' · ⚠ ' + failed.length + ' report(s) rate-limited' : ''}`;
     const subEl = document.getElementById('aa-sub');
     if (subEl) subEl.textContent = `Live from GA4 · orascom-ohm1 · ${aaStartDate} → ${aaEndDate}${aaHotelId ? ' · ' + (document.getElementById('aa-hotel-filter')?.selectedOptions[0]?.text || '') : ''}${aaExcludeTest && !testSkipped ? ' · test data excluded' : ''}`;
-    if (statusEl) { statusEl.className = 'fu-status fu-ok'; statusEl.textContent = '● GA4 Data'; }
+    if (statusEl) {
+      if (failed.length) { statusEl.className = 'fu-status fu-warn'; statusEl.textContent = `● Partial (${8 - failed.length}/8)`; }
+      else { statusEl.className = 'fu-status fu-ok'; statusEl.textContent = '● GA4 Data'; }
+    }
 
   } catch(e) {
     console.error('AA load error:', e);
