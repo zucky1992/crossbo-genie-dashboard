@@ -4459,35 +4459,30 @@ async function aaLoad(force = false) {
   });
 
   try {
-    // Sequential loading with delays to stay within GA4 API rate limits
-    // GA4 allows ~10 requests/minute for free-tier properties
-    const delay = (ms) => new Promise(r => setTimeout(r, ms));
-    const safeFetch = async (report) => {
-      try { return await aaFetch(report); }
-      catch(e) { console.warn(`${report} failed: ${e.message}`); return null; }
-    };
+    // Single batch call — all 8 reports in 2 GA4 API requests (5+3) via server-side batching
+    const batchReports = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,top_services,recommendations,notifications,app_health';
+    let batchUrl = `${AA_FN}?reports=${batchReports}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
+    if (aaHotelId) batchUrl += `&hotelId=${aaHotelId}`;
+    if (aaExcludeTest) batchUrl += `&excludeTest=true`;
+    else batchUrl += `&excludeTest=false`;
 
-    const funnel = await safeFetch('booking_funnel');
-    await delay(1000);
-    const screens = await safeFetch('screen_views');
-    await delay(1000);
-    const abandon = await safeFetch('abandon_by_step');
-    await delay(1000);
-    const complete = await safeFetch('booking_complete_detail');
-    await delay(1000);
-    const services = await safeFetch('top_services');
-    await delay(1000);
-    const recs = await safeFetch('recommendations');
-    await delay(1000);
-    const notifs = await safeFetch('notifications');
-    await delay(1000);
-    const health = await safeFetch('app_health');
+    const batchRes = await fetch(batchUrl);
+    if (!batchRes.ok) throw new Error(`Batch fetch failed: ${batchRes.status}`);
+    const batchData = await batchRes.json();
+    if (batchData.error) throw new Error(batchData.error);
 
-    const failed = [
-      !funnel && 'booking_funnel', !screens && 'screen_views', !abandon && 'abandon_by_step',
-      !complete && 'booking_complete_detail', !services && 'top_services', !recs && 'recommendations',
-      !notifs && 'notifications', !health && 'app_health'
-    ].filter(Boolean);
+    const funnel = batchData.booking_funnel || null;
+    const screens = batchData.screen_views || null;
+    const abandon = batchData.abandon_by_step || null;
+    const complete = batchData.booking_complete_detail || null;
+    const services = batchData.top_services || null;
+    const recs = batchData.recommendations || null;
+    const notifs = batchData.notifications || null;
+    const health = batchData.app_health || null;
+
+    const failed = Object.entries(batchData)
+      .filter(([k, v]) => k !== '_testFilterSkipped' && v?.error)
+      .map(([k]) => k);
 
     aaFunnelData = funnel;
     aaAbandonData = abandon;
@@ -4501,7 +4496,7 @@ async function aaLoad(force = false) {
     if (health && screens) aaRenderAppHealth(health, screens);
 
     const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    const testSkipped = funnel?._testFilterSkipped || screens?._testFilterSkipped;
+    const testSkipped = batchData._testFilterSkipped;
     const updEl = document.getElementById('aa-updated');
     if (updEl) updEl.textContent = `Updated ${now} · GA4 data reflects last 24–48h${testSkipped ? ' · ⚠ test filter inactive' : ''}${failed.length ? ' · ⚠ ' + failed.length + ' report(s) rate-limited' : ''}`;
     const subEl = document.getElementById('aa-sub');
