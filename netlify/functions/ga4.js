@@ -36,16 +36,14 @@ async function getAccessToken(serviceAccount) {
   return data.access_token;
 }
 
-async function runReport(token, body, retries = 2) {
+async function runReport(token, body, retries = 1) {
   const res = await fetch(`${GA4_API_BASE}/properties/${GA4_PROPERTY_ID}:runReport`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (res.status === 429 && retries > 0) {
-    // Rate limited — wait and retry
-    const wait = (3 - retries) * 2000 + 1000; // 1s, 3s
-    await new Promise(r => setTimeout(r, wait));
+    await new Promise(r => setTimeout(r, 1500));
     return runReport(token, body, retries - 1);
   }
   if (!res.ok) { const err = await res.text(); throw new Error(`GA4 API error (${res.status}): ${err}`); }

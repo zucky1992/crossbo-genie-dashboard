@@ -4459,20 +4459,19 @@ async function aaLoad(force = false) {
   });
 
   try {
-    // Batch 1: critical reports
-    const [funnel, screens, abandon, complete] = await Promise.all([
-      aaFetch('booking_funnel'),
-      aaFetch('screen_views'),
-      aaFetch('abandon_by_step'),
-      aaFetch('booking_complete_detail'),
-    ]);
-    // Batch 2: secondary reports (slight delay to avoid GA4 429)
-    const [services, recs, notifs, health] = await Promise.all([
-      aaFetch('top_services'),
-      aaFetch('recommendations'),
-      aaFetch('notifications'),
-      aaFetch('app_health'),
-    ]);
+    // Sequential loading to avoid GA4 API 429 rate limits
+    const delay = (ms) => new Promise(r => setTimeout(r, ms));
+    const funnel = await aaFetch('booking_funnel');
+    const screens = await aaFetch('screen_views');
+    await delay(300);
+    const abandon = await aaFetch('abandon_by_step');
+    const complete = await aaFetch('booking_complete_detail');
+    await delay(300);
+    const services = await aaFetch('top_services');
+    const recs = await aaFetch('recommendations');
+    await delay(300);
+    const notifs = await aaFetch('notifications');
+    const health = await aaFetch('app_health');
 
     aaFunnelData = funnel;
     aaAbandonData = abandon;
