@@ -437,11 +437,11 @@ exports.handler = async (event) => {
     const keyRaw = process.env.GA4_SERVICE_ACCOUNT_KEY;
     if (!keyRaw) throw new Error('GA4_SERVICE_ACCOUNT_KEY env var not set');
     const serviceAccount = JSON.parse(keyRaw);
-    const { report = 'screen_views', startDate = '30daysAgo', endDate = 'today', hotelId } = event.queryStringParameters || {};
+    const { report = 'screen_views', startDate = '30daysAgo', endDate = 'today', hotelId, hotelName, excludeTest = 'true', appVersion } = event.queryStringParameters || {};
     const token = await getAccessToken(serviceAccount);
     let body = buildReportBody(report, startDate, endDate);
 
-    // Apply hotel_id filter if specified
+    // Apply hotel_id filter (event-scoped, legacy — low coverage)
     if (hotelId) {
       const hotelFilter = { filter: { fieldName: 'customEvent:hotel_id', stringFilter: { value: hotelId } } };
       if (body.dimensionFilter) {
@@ -451,7 +451,65 @@ exports.handler = async (event) => {
       }
     }
 
-    const data = await runReport(token, body);
+    // Apply hotel name filter (user-scoped — better coverage than hotel_id)
+    if (hotelName) {
+      const nameFilter = { filter: { fieldName: 'customUser:property', stringFilter: { value: hotelName } } };
+      if (body.dimensionFilter) {
+        body.dimensionFilter = { andGroup: { expressions: [body.dimensionFilter, nameFilter] } };
+      } else {
+        body.dimensionFilter = nameFilter;
+      }
+    }
+
+    // Exclude test/development traffic (user-scoped environment property)
+    // Requires 'environment' registered as user-scoped custom dimension in GA4 Admin
+    if (excludeTest === 'true') {
+      const envFilter = { notExpression: { filter: { fieldName: 'customUser:environment', stringFilter: { value: 'development' } } } };
+      if (body.dimensionFilter) {
+        body.dimensionFilter = { andGroup: { expressions: [body.dimensionFilter, envFilter] } };
+      } else {
+        body.dimensionFilter = envFilter;
+      }
+    }
+
+    // Filter by app version (useful for verifying new builds)
+    if (appVersion) {
+      const versionFilter = { filter: { fieldName: 'appVersion', stringFilter: { value: appVersion } } };
+      if (body.dimensionFilter) {
+        body.dimensionFilter = { andGroup: { expressions: [body.dimensionFilter, versionFilter] } };
+      } else {
+        body.dimensionFilter = versionFilter;
+      }
+    }
+
+    let data;
+    try {
+      data = await runReport(token, body);
+    } catch (reportErr) {
+      // If excludeTest filter caused the error (dimension not registered yet), retry without it
+      if (excludeTest === 'true' && reportErr.message.includes('customUser:environment')) {
+        console.warn('customUser:environment not registered yet — retrying without test filter');
+        // Rebuild without the environment filter
+        body = buildReportBody(report, startDate, endDate);
+        // Re-apply hotel filters only
+        if (hotelId) {
+          const hf = { filter: { fieldName: 'customEvent:hotel_id', stringFilter: { value: hotelId } } };
+          body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, hf] } } : hf;
+        }
+        if (hotelName) {
+          const nf = { filter: { fieldName: 'customUser:property', stringFilter: { value: hotelName } } };
+          body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, nf] } } : nf;
+        }
+        if (appVersion) {
+          const vf = { filter: { fieldName: 'appVersion', stringFilter: { value: appVersion } } };
+          body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, vf] } } : vf;
+        }
+        data = await runReport(token, body);
+        data._testFilterSkipped = true; // Signal to dashboard
+      } else {
+        throw reportErr;
+      }
+    }
     return { statusCode: 200, headers, body: JSON.stringify(data) };
   } catch (err) {
     console.error('GA4 function error:', err);

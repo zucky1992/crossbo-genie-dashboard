@@ -670,6 +670,11 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
       <option value="8d07caa9-dae4-46c8-83b3-52cb1514dcad">Ali Pasha</option>
     </select>
     <span style="margin-left:auto;font-size:10px;color:var(--text3)" id="aa-updated"></span>
+    <div style="width:1px;height:20px;background:var(--border)"></div>
+    <label style="font-size:10px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none" title="Filter out engineering/QA testing traffic (environment=development)">
+      <input type="checkbox" id="aa-exclude-test" checked onchange="aaToggleExcludeTest(this.checked)" style="margin:0;accent-color:var(--teal)">
+      Exclude test data
+    </label>
   </div>
 
   <div class="scroll">
@@ -4351,6 +4356,7 @@ const AA_FN = '/.netlify/functions/ga4';
 let aaStartDate = '7daysAgo';
 let aaEndDate = 'today';
 let aaHotelId = '';
+let aaExcludeTest = true;
 let aaCache = {};
 let aaLoaded = false;
 let aaOpenDepts = new Set();
@@ -4394,6 +4400,12 @@ function aaSetHotel(val) {
   aaLoad(true);
 }
 
+function aaToggleExcludeTest(checked) {
+  aaExcludeTest = checked;
+  aaCache = {}; aaLoaded = false; aaOpenDepts.clear();
+  aaLoad(true);
+}
+
 function aaToggleGap() {
   const b = document.getElementById('aa-gap-body');
   const t = document.getElementById('aa-gap-toggle');
@@ -4402,10 +4414,12 @@ function aaToggleGap() {
 }
 
 async function aaFetch(report) {
-  const key = `${report}:${aaStartDate}:${aaEndDate}:${aaHotelId}`;
+  const key = `${report}:${aaStartDate}:${aaEndDate}:${aaHotelId}:${aaExcludeTest}`;
   if (aaCache[key]) return aaCache[key];
   let url = `${AA_FN}?report=${report}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
   if (aaHotelId) url += `&hotelId=${aaHotelId}`;
+  if (aaExcludeTest) url += `&excludeTest=true`;
+  else url += `&excludeTest=false`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${report} failed: ${res.status}`);
   const data = await res.json();
@@ -4469,10 +4483,11 @@ async function aaLoad(force = false) {
     aaRenderAppHealth(health, screens);
 
     const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const testSkipped = funnel._testFilterSkipped || screens._testFilterSkipped;
     const updEl = document.getElementById('aa-updated');
-    if (updEl) updEl.textContent = `Updated ${now} · GA4 data reflects last 24–48h`;
+    if (updEl) updEl.textContent = `Updated ${now} · GA4 data reflects last 24–48h${testSkipped ? ' · ⚠ test filter inactive' : ''}`;
     const subEl = document.getElementById('aa-sub');
-    if (subEl) subEl.textContent = `Live from GA4 · orascom-ohm1 · ${aaStartDate} → ${aaEndDate}${aaHotelId ? ' · ' + (document.getElementById('aa-hotel-filter')?.selectedOptions[0]?.text || '') : ''}`;
+    if (subEl) subEl.textContent = `Live from GA4 · orascom-ohm1 · ${aaStartDate} → ${aaEndDate}${aaHotelId ? ' · ' + (document.getElementById('aa-hotel-filter')?.selectedOptions[0]?.text || '') : ''}${aaExcludeTest && !testSkipped ? ' · test data excluded' : ''}`;
     if (statusEl) { statusEl.className = 'fu-status fu-ok'; statusEl.textContent = '● GA4 Data'; }
 
   } catch(e) {
