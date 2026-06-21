@@ -1,14 +1,13 @@
 /**
  * Netlify Function: ga4.js v4
- * Full event inventory + rich dimension queries using all 35 registered custom dimensions.
- * Server-side cache (5-min TTL) to reduce GA4 API calls and avoid 429 rate limits.
+ * Adds: server-side 5-min cache, 429 retry, excludeTest filter (default off).
  */
 
 const GA4_PROPERTY_ID = '503373961';
 const GA4_API_BASE = 'https://analyticsdata.googleapis.com/v1beta';
 const TOKEN_URI = 'https://oauth2.googleapis.com/token';
 
-// In-memory cache — survives across warm invocations of the same Netlify Function instance
+// In-memory cache — persists across warm Netlify function invocations
 const _cache = {};
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
@@ -48,20 +47,10 @@ async function runReport(token, body, retries = 1) {
     body: JSON.stringify(body),
   });
   if (res.status === 429 && retries > 0) {
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, 2000));
     return runReport(token, body, retries - 1);
   }
   if (!res.ok) { const err = await res.text(); throw new Error(`GA4 API error (${res.status}): ${err}`); }
-  return res.json();
-}
-
-async function batchRunReports(token, bodies) {
-  const res = await fetch(`${GA4_API_BASE}/properties/${GA4_PROPERTY_ID}:batchRunReports`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ requests: bodies }),
-  });
-  if (!res.ok) { const err = await res.text(); throw new Error(`GA4 batch API error (${res.status}): ${err}`); }
   return res.json();
 }
 
@@ -456,115 +445,38 @@ exports.handler = async (event) => {
     const keyRaw = process.env.GA4_SERVICE_ACCOUNT_KEY;
     if (!keyRaw) throw new Error('GA4_SERVICE_ACCOUNT_KEY env var not set');
     const serviceAccount = JSON.parse(keyRaw);
-    const { report = 'screen_views', startDate = '30daysAgo', endDate = 'today', hotelId, hotelName, excludeTest = 'true', appVersion, reports: batchReports } = event.queryStringParameters || {};
+    const { report = 'screen_views', startDate = '30daysAgo', endDate = 'today', hotelId, excludeTest = 'false' } = event.queryStringParameters || {};
 
-    // Helper to apply shared filters to a report body
-    function applyFilters(body) {
-      if (hotelId) {
-        const hf = { filter: { fieldName: 'customEvent:hotel_id', stringFilter: { value: hotelId } } };
-        body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, hf] } } : hf;
-      }
-      if (hotelName) {
-        const nf = { filter: { fieldName: 'customUser:property', stringFilter: { value: hotelName } } };
-        body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, nf] } } : nf;
-      }
-      if (excludeTest === 'true') {
-        const ef = { notExpression: { filter: { fieldName: 'customUser:environment', stringFilter: { value: 'development' } } } };
-        body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, ef] } } : ef;
-      }
-      if (appVersion) {
-        const vf = { filter: { fieldName: 'appVersion', stringFilter: { value: appVersion } } };
-        body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, vf] } } : vf;
-      }
-      return body;
-    }
-
-    // ── BATCH MODE: multiple reports in one call ──
-    if (batchReports) {
-      const reportNames = batchReports.split(',').map(s => s.trim()).filter(Boolean);
-      const cacheKey = `batch:${reportNames.join(',')}:${startDate}:${endDate}:${hotelId||''}:${hotelName||''}:${excludeTest}:${appVersion||''}`;
-      if (_cache[cacheKey] && Date.now() - _cache[cacheKey].ts < CACHE_TTL) {
-        return { statusCode: 200, headers, body: JSON.stringify(_cache[cacheKey].data) };
-      }
-
-      const token = await getAccessToken(serviceAccount);
-      const result = {};
-      let filterFailed = false;
-
-      // GA4 batchRunReports supports max 5 per call
-      for (let i = 0; i < reportNames.length; i += 5) {
-        const chunk = reportNames.slice(i, i + 5);
-        const bodies = chunk.map(r => applyFilters(buildReportBody(r, startDate, endDate)));
-
-        try {
-          const batchResult = await batchRunReports(token, bodies);
-          chunk.forEach((name, idx) => {
-            result[name] = batchResult.reports?.[idx] || { rows: [] };
-          });
-        } catch (batchErr) {
-          // If user-scoped filter fails, retry chunk without those filters
-          if (excludeTest === 'true' && (batchErr.message.includes('customUser:environment') || batchErr.message.includes('customUser:property'))) {
-            filterFailed = true;
-            const fallbackBodies = chunk.map(r => {
-              const b = buildReportBody(r, startDate, endDate);
-              if (appVersion) {
-                const vf = { filter: { fieldName: 'appVersion', stringFilter: { value: appVersion } } };
-                b.dimensionFilter = b.dimensionFilter ? { andGroup: { expressions: [b.dimensionFilter, vf] } } : vf;
-              }
-              return b;
-            });
-            const fallbackResult = await batchRunReports(token, fallbackBodies);
-            chunk.forEach((name, idx) => {
-              result[name] = fallbackResult.reports?.[idx] || { rows: [] };
-            });
-          } else {
-            // Return partial results + error info
-            chunk.forEach(name => { result[name] = { error: batchErr.message }; });
-          }
-        }
-
-        // Small delay between batch chunks
-        if (i + 5 < reportNames.length) await new Promise(r => setTimeout(r, 1000));
-      }
-
-      if (filterFailed) result._testFilterSkipped = true;
-      _cache[cacheKey] = { data: result, ts: Date.now() };
-      return { statusCode: 200, headers, body: JSON.stringify(result) };
-    }
-
-    // ── SINGLE REPORT MODE (original behavior) ──
-
-    // ── SINGLE REPORT MODE (original behavior) ──
-
-    // Check server-side cache first
-    const cacheKey = `${report}:${startDate}:${endDate}:${hotelId||''}:${hotelName||''}:${excludeTest}:${appVersion||''}`;
+    // Server-side cache — avoids hitting GA4 on page refresh
+    const cacheKey = `${report}:${startDate}:${endDate}:${hotelId||''}:${excludeTest}`;
     if (_cache[cacheKey] && Date.now() - _cache[cacheKey].ts < CACHE_TTL) {
       return { statusCode: 200, headers, body: JSON.stringify(_cache[cacheKey].data) };
     }
 
     const token = await getAccessToken(serviceAccount);
-    let body = applyFilters(buildReportBody(report, startDate, endDate));
+    let body = buildReportBody(report, startDate, endDate);
 
-    let data;
-    try {
-      data = await runReport(token, body);
-    } catch (reportErr) {
-      // If excludeTest filter caused the error (dimension not registered yet), retry without it
-      if (excludeTest === 'true' && (reportErr.message.includes('customUser:environment') || reportErr.message.includes('customUser:property'))) {
-        console.warn('User-scoped dimension not available yet — retrying without filter');
-        body = buildReportBody(report, startDate, endDate);
-        // Only re-apply appVersion filter (skip user-scoped filters that caused the error)
-        if (appVersion) {
-          const vf = { filter: { fieldName: 'appVersion', stringFilter: { value: appVersion } } };
-          body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, vf] } } : vf;
-        }
-        data = await runReport(token, body);
-        data._testFilterSkipped = true;
+    // Apply hotel_id filter if specified
+    if (hotelId) {
+      const hotelFilter = { filter: { fieldName: 'customEvent:hotel_id', stringFilter: { value: hotelId } } };
+      if (body.dimensionFilter) {
+        body.dimensionFilter = { andGroup: { expressions: [body.dimensionFilter, hotelFilter] } };
       } else {
-        throw reportErr;
+        body.dimensionFilter = hotelFilter;
       }
     }
-    // Cache successful response
+
+    // Exclude development/test traffic (only when explicitly enabled)
+    if (excludeTest === 'true') {
+      const envFilter = { notExpression: { filter: { fieldName: 'customUser:environment', stringFilter: { value: 'development' } } } };
+      if (body.dimensionFilter) {
+        body.dimensionFilter = { andGroup: { expressions: [body.dimensionFilter, envFilter] } };
+      } else {
+        body.dimensionFilter = envFilter;
+      }
+    }
+
+    const data = await runReport(token, body);
     _cache[cacheKey] = { data, ts: Date.now() };
     return { statusCode: 200, headers, body: JSON.stringify(data) };
   } catch (err) {

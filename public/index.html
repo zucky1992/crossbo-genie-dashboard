@@ -671,7 +671,7 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
     </select>
     <span style="margin-left:auto;font-size:10px;color:var(--text3)" id="aa-updated"></span>
     <div style="width:1px;height:20px;background:var(--border)"></div>
-    <label style="font-size:10px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none" title="Filter out engineering/QA testing traffic (environment=development)">
+    <label style="font-size:10px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none" title="Filter out engineering/QA testing traffic (environment=development). Enable after ~48h of registering the dimension.">
       <input type="checkbox" id="aa-exclude-test" onchange="aaToggleExcludeTest(this.checked)" style="margin:0;accent-color:var(--teal)">
       Exclude test data
     </label>
@@ -4356,7 +4356,7 @@ const AA_FN = '/.netlify/functions/ga4';
 let aaStartDate = '7daysAgo';
 let aaEndDate = 'today';
 let aaHotelId = '';
-let aaExcludeTest = false; // Enable after environment dimension has data (~24-48h after June 21)
+let aaExcludeTest = false; // Enable after environment dimension has data (~24-48h after registration)
 let aaCache = {};
 let aaLoaded = false;
 let aaOpenDepts = new Set();
@@ -4390,19 +4390,19 @@ function aaSetRange(el) {
   el.classList.add('on');
   aaStartDate = el.dataset.start;
   aaEndDate = el.dataset.end;
-  aaCache = {}; aaLoaded = false; aaOpenDepts.clear(); aaCompleteData = null; aaServicesData = null;
+  aaCache = {}; aaLoaded = false; aaOpenDepts.clear();
   aaLoad(true);
 }
 
 function aaSetHotel(val) {
   aaHotelId = val;
-  aaCache = {}; aaLoaded = false; aaOpenDepts.clear(); aaCompleteData = null; aaServicesData = null;
+  aaCache = {}; aaLoaded = false; aaOpenDepts.clear();
   aaLoad(true);
 }
 
 function aaToggleExcludeTest(checked) {
   aaExcludeTest = checked;
-  aaCache = {}; aaLoaded = false; aaOpenDepts.clear(); aaCompleteData = null; aaServicesData = null;
+  aaCache = {}; aaLoaded = false; aaOpenDepts.clear();
   aaLoad(true);
 }
 
@@ -4419,7 +4419,6 @@ async function aaFetch(report) {
   let url = `${AA_FN}?report=${report}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
   if (aaHotelId) url += `&hotelId=${aaHotelId}`;
   if (aaExcludeTest) url += `&excludeTest=true`;
-  else url += `&excludeTest=false`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${report} failed: ${res.status}`);
   const data = await res.json();
@@ -4459,53 +4458,35 @@ async function aaLoad(force = false) {
   });
 
   try {
-    // Initial batch: 6 core reports (2 batch calls of 3+3 = 2 GA4 API hits)
-    // booking_complete_detail + top_services loaded lazily when dept cards expand
-    const batchReports = 'booking_funnel,screen_views,abandon_by_step,recommendations,notifications,app_health';
-    let batchUrl = `${AA_FN}?reports=${batchReports}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
-    if (aaHotelId) batchUrl += `&hotelId=${aaHotelId}`;
-    if (aaExcludeTest) batchUrl += `&excludeTest=true`;
-    else batchUrl += `&excludeTest=false`;
-
-    const batchRes = await fetch(batchUrl);
-    if (!batchRes.ok) throw new Error(`Batch fetch failed: ${batchRes.status}`);
-    const batchData = await batchRes.json();
-    if (batchData.error) throw new Error(batchData.error);
-
-    const funnel = batchData.booking_funnel || null;
-    const screens = batchData.screen_views || null;
-    const abandon = batchData.abandon_by_step || null;
-    const complete = null; // Loaded lazily when dept card expands
-    const services = null; // Loaded lazily when dept card expands
-    const recs = batchData.recommendations || null;
-    const notifs = batchData.notifications || null;
-    const health = batchData.app_health || null;
-
-    const failed = Object.entries(batchData)
-      .filter(([k, v]) => k !== '_testFilterSkipped' && v?.error)
-      .map(([k]) => k);
+    const [funnel, screens, abandon, complete, services, recs, notifs, health] = await Promise.all([
+      aaFetch('booking_funnel'),
+      aaFetch('screen_views'),
+      aaFetch('abandon_by_step'),
+      aaFetch('booking_complete_detail'),
+      aaFetch('top_services'),
+      aaFetch('recommendations'),
+      aaFetch('notifications'),
+      aaFetch('app_health'),
+    ]);
 
     aaFunnelData = funnel;
     aaAbandonData = abandon;
     aaCompleteData = complete;
     aaServicesData = services;
 
-    if (funnel) { aaRenderKPIs(funnel, screens, health); aaRenderFunnel(funnel); aaRenderDeptPills(funnel, screens); }
-    else { document.getElementById('aa-kpis').innerHTML = '<div style="font-size:11px;color:var(--amber);padding:8px">⚠ KPIs unavailable — GA4 rate limit. Wait 1 min and click Refresh.</div>'; }
-    if (recs) aaRenderRecs(recs);
-    if (notifs) aaRenderNotifications(notifs);
-    if (health && screens) aaRenderAppHealth(health, screens);
+    aaRenderKPIs(funnel, screens, health);
+    aaRenderFunnel(funnel);
+    aaRenderDeptPills(funnel, screens);
+    aaRenderRecs(recs);
+    aaRenderNotifications(notifs);
+    aaRenderAppHealth(health, screens);
 
     const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    const testSkipped = batchData._testFilterSkipped;
     const updEl = document.getElementById('aa-updated');
-    if (updEl) updEl.textContent = `Updated ${now} · GA4 data reflects last 24–48h${testSkipped ? ' · ⚠ test filter inactive' : ''}${failed.length ? ' · ⚠ ' + failed.length + ' report(s) rate-limited' : ''}`;
+    if (updEl) updEl.textContent = `Updated ${now} · GA4 data reflects last 24–48h`;
     const subEl = document.getElementById('aa-sub');
-    if (subEl) subEl.textContent = `Live from GA4 · orascom-ohm1 · ${aaStartDate} → ${aaEndDate}${aaHotelId ? ' · ' + (document.getElementById('aa-hotel-filter')?.selectedOptions[0]?.text || '') : ''}${aaExcludeTest && !testSkipped ? ' · test data excluded' : ''}`;
-    if (statusEl) {
-      if (failed.length) { statusEl.className = 'fu-status fu-warn'; statusEl.textContent = `● Partial (${8 - failed.length}/8)`; }
-      else { statusEl.className = 'fu-status fu-ok'; statusEl.textContent = '● GA4 Data'; }
-    }
+    if (subEl) subEl.textContent = `Live from GA4 · orascom-ohm1 · ${aaStartDate} → ${aaEndDate}${aaHotelId ? ' · ' + (document.getElementById('aa-hotel-filter')?.selectedOptions[0]?.text || '') : ''}`;
+    if (statusEl) { statusEl.className = 'fu-status fu-ok'; statusEl.textContent = '● GA4 Data'; }
 
   } catch(e) {
     console.error('AA load error:', e);
@@ -4631,14 +4612,6 @@ async function aaToggleDept(dept) {
   aaOpenDepts.add(dept + '_loaded');
 
   try {
-    // Lazy-load booking_complete_detail + top_services on first dept expansion
-    if (!aaCompleteData) {
-      try { aaCompleteData = await aaFetch('booking_complete_detail'); } catch(e) { console.warn('booking_complete_detail:', e.message); }
-    }
-    if (!aaServicesData) {
-      try { aaServicesData = await aaFetch('top_services'); } catch(e) { console.warn('top_services:', e.message); }
-    }
-
     const cfg = DEPT_CONFIG[dept];
     const data = await aaFetch(cfg.report);
     const rows = aaRows(data);
@@ -4763,12 +4736,10 @@ async function aaRenderDeptBody(dept, rows, cfg) {
 
   // ── Custom Store Funnel ────────────────────────────────────────────────────
   if (dept === 'store') {
-    // Stitch funnel from multiple data sources
     const labelK = rows[0]?.['customEvent:label'] !== undefined ? 'customEvent:label' : 'label';
     const valueK = rows[0]?.['customEvent:value'] !== undefined ? 'customEvent:value' : 'value';
     const eventK = rows[0]?.eventName !== undefined ? 'eventName' : null;
 
-    // Screen views for /store
     let storeViews = 0;
     try {
       const svData = await aaFetch('screen_views');
@@ -4777,27 +4748,17 @@ async function aaRenderDeptBody(dept, rows, cfg) {
         const s = (r.unifiedScreenName || '').toLowerCase();
         return s.includes('/store') || s === 'store';
       }).reduce((a, r) => a + (r.screenPageViews || 0), 0);
-    } catch(e) { /* screen_views may already be cached */ }
+    } catch(e) {}
 
-    // Click events from store report rows
-    const catSelections = rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'category_selection')
-      .reduce((a, r) => a + r.eventCount, 0);
-    const subcatTaps = rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'subcategory_tap')
-      .reduce((a, r) => a + r.eventCount, 0);
-    const productViews = rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'product_view')
-      .reduce((a, r) => a + r.eventCount, 0);
-    const specialInstr = rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'special_instructions_modal_button')
-      .reduce((a, r) => a + r.eventCount, 0);
-    const cartAdds = rows.filter(r => (eventK ? r[eventK] : '') === 'store_item_added_to_cart')
-      .reduce((a, r) => a + r.eventCount, 0);
-    const bookStarts = rows.filter(r => (eventK ? r[eventK] : '') === 'booking_start')
-      .reduce((a, r) => a + r.eventCount, 0);
-    const bookComplete = rows.filter(r => (eventK ? r[eventK] : '') === 'booking_complete')
-      .reduce((a, r) => a + r.eventCount, 0);
-    const bookAbandoned = rows.filter(r => (eventK ? r[eventK] : '') === 'booking_abandoned')
-      .reduce((a, r) => a + r.eventCount, 0);
+    const catSelections = rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'category_selection').reduce((a, r) => a + r.eventCount, 0);
+    const productViews = rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'product_view').reduce((a, r) => a + r.eventCount, 0);
+    const specialInstr = rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'special_instructions_modal_button').reduce((a, r) => a + r.eventCount, 0);
+    const cartAdds = rows.filter(r => (eventK ? r[eventK] : '') === 'store_item_added_to_cart').reduce((a, r) => a + r.eventCount, 0);
+    const bookStarts = rows.filter(r => (eventK ? r[eventK] : '') === 'booking_start').reduce((a, r) => a + r.eventCount, 0);
+    const bookComplete = rows.filter(r => (eventK ? r[eventK] : '') === 'booking_complete').reduce((a, r) => a + r.eventCount, 0);
+    const homeExits = rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'top_navigation').reduce((a, r) => a + r.eventCount, 0);
 
-    // Product-level conversion table
+    // Product conversion table
     const productViewCounts = {};
     rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'product_view').forEach(r => {
       const name = r[valueK] || '(unknown)';
@@ -4808,29 +4769,20 @@ async function aaRenderDeptBody(dept, rows, cfg) {
       const name = r[valueK] || r[labelK] || '(unknown)';
       cartItemCounts[name] = (cartItemCounts[name] || 0) + r.eventCount;
     });
-    // Merge into product table
     const allProducts = new Set([...Object.keys(productViewCounts), ...Object.keys(cartItemCounts)]);
     const productTable = [...allProducts].map(name => ({
-      name,
-      views: productViewCounts[name] || 0,
-      carts: cartItemCounts[name] || 0,
-      conv: productViewCounts[name] > 0 ? Math.round(cartItemCounts[name] || 0) / productViewCounts[name] * 100 : 0,
+      name, views: productViewCounts[name] || 0, carts: cartItemCounts[name] || 0,
+      conv: productViewCounts[name] > 0 ? (cartItemCounts[name] || 0) / productViewCounts[name] * 100 : 0,
     })).sort((a, b) => b.views - a.views);
 
     // Category breakdown
     const catCounts = {};
     rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'category_selection').forEach(r => {
-      const cat = r[valueK] || '(unknown)';
-      catCounts[cat] = (catCounts[cat] || 0) + r.eventCount;
+      catCounts[r[valueK] || '(unknown)'] = (catCounts[r[valueK] || '(unknown)'] || 0) + r.eventCount;
     });
     const sortedCats = Object.entries(catCounts).sort((a, b) => b[1] - a[1]);
     const maxCat = sortedCats[0]?.[1] || 1;
 
-    // Home exits
-    const homeExits = rows.filter(r => (eventK ? r[eventK] : '') === 'click_event' && r[labelK] === 'top_navigation')
-      .reduce((a, r) => a + r.eventCount, 0);
-
-    // Build funnel steps
     const steps = [
       { label: 'Store opened', count: storeViews, color: 'var(--blue)', icon: '🏪' },
       { label: 'Category browsed', count: catSelections, color: 'var(--blue)', icon: '📂' },
@@ -4843,7 +4795,7 @@ async function aaRenderDeptBody(dept, rows, cfg) {
 
     richHTML += `
       <div style="margin-bottom:20px">
-        <div class="sec-lbl" style="margin-bottom:12px">Store purchase funnel · stitched from click_events + booking events</div>
+        <div class="sec-lbl" style="margin-bottom:12px">Store purchase funnel</div>
         <div style="display:flex;gap:2px;align-items:flex-end;height:120px;margin-bottom:8px">
           ${steps.map((s, i) => {
             const h = Math.max(6, Math.round(s.count / maxCount * 110));
@@ -4867,42 +4819,20 @@ async function aaRenderDeptBody(dept, rows, cfg) {
           }).join('<div style="flex:0 0 1px"></div>')}
         </div>
       </div>
-
-      ${homeExits > 0 ? `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:8px 12px;margin-bottom:16px;font-size:11px;color:var(--amber-d)">
-        🚪 <strong>${homeExits} home-button exits</strong> (${storeViews > 0 ? Math.round(homeExits/storeViews*100) : '?'}% of store visitors) — guests leaving via top navigation without buying.
-      </div>` : ''}
-
+      ${homeExits > 0 ? `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:8px 12px;margin-bottom:16px;font-size:11px;color:var(--amber-d)">🚪 <strong>${homeExits} home-button exits</strong> (${storeViews > 0 ? Math.round(homeExits/storeViews*100) : '?'}% of store visitors)</div>` : ''}
       <div style="margin-bottom:20px">
-        <div class="sec-lbl" style="margin-bottom:8px">Category interest (${sortedCats.reduce((a,[,c])=>a+c,0)} total selections)</div>
-        ${sortedCats.map(([cat, count]) => `
-          <div class="fu-bar-row">
-            <div class="fu-bar-label" style="font-size:11px">${cat}</div>
-            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/maxCat*100)}%;background:var(--blue)"></div></div>
-            <div class="fu-bar-val">${count.toLocaleString()}</div>
-            <div class="fu-bar-pct">${Math.round(count/catSelections*100)}%</div>
-          </div>`).join('')}
+        <div class="sec-lbl" style="margin-bottom:8px">Category interest</div>
+        ${sortedCats.map(([cat, count]) => `<div class="fu-bar-row"><div class="fu-bar-label" style="font-size:11px">${cat}</div><div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/maxCat*100)}%;background:var(--blue)"></div></div><div class="fu-bar-val">${count}</div><div class="fu-bar-pct">${Math.round(count/catSelections*100)}%</div></div>`).join('')}
       </div>
-
       <div style="margin-bottom:20px">
-        <div class="sec-lbl" style="margin-bottom:8px">Product conversion · view → add to cart</div>
+        <div class="sec-lbl" style="margin-bottom:8px">Product conversion · view → cart</div>
         <div style="max-height:300px;overflow-y:auto">
           <table style="width:100%;font-size:11px;border-collapse:collapse">
-            <tr style="background:var(--bg2);position:sticky;top:0">
-              <th style="text-align:left;padding:6px 8px;font-weight:600">Product</th>
-              <th style="text-align:right;padding:6px 8px;font-weight:600">Views</th>
-              <th style="text-align:right;padding:6px 8px;font-weight:600">Cart adds</th>
-              <th style="text-align:right;padding:6px 8px;font-weight:600">Conv%</th>
-            </tr>
-            ${productTable.slice(0, 20).map(p => `
-              <tr style="border-bottom:1px solid var(--border)">
-                <td style="padding:5px 8px;color:var(--text1)">${p.name}</td>
-                <td style="text-align:right;padding:5px 8px">${p.views}</td>
-                <td style="text-align:right;padding:5px 8px;${p.carts > 0 ? 'color:var(--teal);font-weight:600' : 'color:var(--text3)'}">${p.carts}</td>
-                <td style="text-align:right;padding:5px 8px;${p.conv > 15 ? 'color:var(--teal);font-weight:600' : p.conv > 0 ? 'color:var(--amber)' : 'color:var(--text3)'}">${p.conv > 0 ? p.conv.toFixed(0) + '%' : '—'}</td>
-              </tr>`).join('')}
+            <tr style="background:var(--bg2)"><th style="text-align:left;padding:6px 8px">Product</th><th style="text-align:right;padding:6px 8px">Views</th><th style="text-align:right;padding:6px 8px">Carts</th><th style="text-align:right;padding:6px 8px">Conv%</th></tr>
+            ${productTable.slice(0, 20).map(p => `<tr style="border-bottom:1px solid var(--border)"><td style="padding:5px 8px">${p.name}</td><td style="text-align:right;padding:5px 8px">${p.views}</td><td style="text-align:right;padding:5px 8px;${p.carts > 0 ? 'color:var(--teal);font-weight:600' : 'color:var(--text3)'}">${p.carts}</td><td style="text-align:right;padding:5px 8px;${p.conv > 15 ? 'color:var(--teal);font-weight:600' : p.conv > 0 ? 'color:var(--amber)' : 'color:var(--text3)'}">${p.conv > 0 ? p.conv.toFixed(0) + '%' : '—'}</td></tr>`).join('')}
           </table>
         </div>
-        ${specialInstr > 0 ? `<div style="font-size:10px;color:var(--text2);margin-top:8px">ℹ ${specialInstr} "special instructions" saves — guests who reached the customization step.</div>` : ''}
+        ${specialInstr > 0 ? `<div style="font-size:10px;color:var(--text2);margin-top:8px">ℹ ${specialInstr} special instructions saves</div>` : ''}
       </div>`;
   }
 
@@ -4974,7 +4904,7 @@ async function aaRenderDeptBody(dept, rows, cfg) {
     taxi: `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Taxi has dedicated events (blue label): taxi_time_selected and taxi_vehicle_selected — richer than just booking_complete.</div>`,
     housekeeping: `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Laundry order total is always 0 (app bug). Housekeeping fires an <code>order</code> event with real value when request is placed.</div>`,
     spa: `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Casa Cook SPA closed Jun 1 – Oct 15. Data is pre-closure. BMS SPA (Chedi only) may show separately. Instrument before reopening.</div>`,
-    store: `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Store is Chedi-only. store_item_added_to_cart fires with item name + price. "You may also like" on product detail is not yet tracked.</div><div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ <strong>Data quality warning:</strong> No internal-user filter exists. Numbers may include engineering/product testing on production. With only ~2 completed orders in 90 days, even 1 test order skews conversion by 50%. <strong>Action needed:</strong> Ask engineering to add an <code>is_internal</code> user property to test accounts.</div>`,
+    store: `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Store is Chedi-only. store_item_added_to_cart fires with item name + price. "You may also like" on product detail is not yet tracked.</div><div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ <strong>Data quality warning:</strong> No internal-user filter exists yet. Numbers may include engineering/product testing. With only ~2 completed orders in 90 days, even 1 test order skews conversion by 50%. Enable "Exclude test data" once the environment dimension is active (~48h).</div>`,
   };
 
   body.innerHTML = (NOTES[dept] || '') + richHTML + interactionsHTML;
