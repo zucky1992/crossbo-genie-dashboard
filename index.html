@@ -3977,7 +3977,7 @@ function renderGAWeekly(){
 /* ══════════════════════════════════════════════════════════
    FEATURE USAGE — GA4 Data API via Netlify Function
 ══════════════════════════════════════════════════════════ */
-const GA4_FN = '/.netlify/functions/ga4';
+const GA4_FN = '/api/ga4';
 let fuStartDate = '7daysAgo';
 let fuEndDate = 'today';
 let fuCache = {};
@@ -4352,7 +4352,7 @@ function fuRenderInsights(funnelData, recsData, screenData) {
 /* ══════════════════════════════════════════════════════════
    APP ANALYTICS — merged GA4 + Feature Usage
 ══════════════════════════════════════════════════════════ */
-const AA_FN = '/.netlify/functions/ga4';
+const AA_FN = '/api/ga4';
 let aaStartDate = '7daysAgo';
 let aaEndDate = 'today';
 let aaHotelId = '';

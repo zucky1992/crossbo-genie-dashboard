@@ -434,18 +434,18 @@ function buildReportBody(report, startDate, endDate) {
   return reports[report];
 }
 
-exports.handler = async (event) => {
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Content-Type': 'application/json',
-  };
-  if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' };
+module.exports = async (req, res) => {
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Content-Type', 'application/json');
+  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
+
   try {
     const keyRaw = process.env.GA4_SERVICE_ACCOUNT_KEY;
     if (!keyRaw) throw new Error('GA4_SERVICE_ACCOUNT_KEY env var not set');
     const serviceAccount = JSON.parse(keyRaw);
-    const { report = 'screen_views', startDate = '30daysAgo', endDate = 'today', hotelId, excludeTest = 'false', multi } = event.queryStringParameters || {};
+    const { report = 'screen_views', startDate = '30daysAgo', endDate = 'today', hotelId, excludeTest = 'false', multi } = req.query || {};
 
     // Shared filter application
     function applyFilters(body) {
@@ -467,7 +467,7 @@ exports.handler = async (event) => {
       const names = multi.split(',').map(s => s.trim()).filter(Boolean);
       const cacheKey = `multi:${names.join(',')}:${startDate}:${endDate}:${hotelId||''}:${excludeTest}`;
       if (_cache[cacheKey] && Date.now() - _cache[cacheKey].ts < CACHE_TTL) {
-        return { statusCode: 200, headers, body: JSON.stringify(_cache[cacheKey].data) };
+        res.status(200).json(_cache[cacheKey].data); return;
       }
 
       const token = await getAccessToken(serviceAccount);
@@ -475,20 +475,19 @@ exports.handler = async (event) => {
       for (const name of names) {
         try {
           const body = applyFilters(buildReportBody(name, startDate, endDate));
-          result[name] = await runReport(token, body, 0); // no per-report retry (keep within timeout)
+          result[name] = await runReport(token, body, 0);
         } catch (e) {
           result[name] = { error: e.message, rows: [] };
         }
       }
       _cache[cacheKey] = { data: result, ts: Date.now() };
-      return { statusCode: 200, headers, body: JSON.stringify(result) };
+      res.status(200).json(result); return;
     }
 
     // ── SINGLE REPORT MODE ──
-    // Server-side cache — avoids hitting GA4 on page refresh
     const cacheKey = `${report}:${startDate}:${endDate}:${hotelId||''}:${excludeTest}`;
     if (_cache[cacheKey] && Date.now() - _cache[cacheKey].ts < CACHE_TTL) {
-      return { statusCode: 200, headers, body: JSON.stringify(_cache[cacheKey].data) };
+      res.status(200).json(_cache[cacheKey].data); return;
     }
 
     const token = await getAccessToken(serviceAccount);
@@ -496,9 +495,9 @@ exports.handler = async (event) => {
 
     const data = await runReport(token, body);
     _cache[cacheKey] = { data, ts: Date.now() };
-    return { statusCode: 200, headers, body: JSON.stringify(data) };
+    res.status(200).json(data);
   } catch (err) {
     console.error('GA4 function error:', err);
-    return { statusCode: 500, headers, body: JSON.stringify({ error: err.message }) };
+    res.status(500).json({ error: err.message });
   }
 };
