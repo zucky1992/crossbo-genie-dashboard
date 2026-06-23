@@ -4363,6 +4363,7 @@ let aaOpenDepts = new Set();
 let aaFunnelData = null;
 let aaAbandonData = null;
 let aaCompleteData = null;
+let aaAbandonDetailData = null;
 let aaServicesData = null;
 
 // Hotel UUID → hotel_id param mapping
@@ -4458,9 +4459,9 @@ async function aaLoad(force = false) {
   });
 
   try {
-    // Single multi-call: all 8 reports fetched SEQUENTIALLY server-side in one
+    // Single multi-call: all reports fetched SEQUENTIALLY server-side in one
     // request. Bounds GA4 concurrency to 1 per call, avoiding 429 rate limits.
-    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,top_services,recommendations,notifications,app_health';
+    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,abandon_detail,top_services,recommendations,notifications,app_health';
     let multiUrl = `${AA_FN}?multi=${reportList}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
     if (aaHotelId) multiUrl += `&hotelId=${aaHotelId}`;
     if (aaExcludeTest) multiUrl += `&excludeTest=true`;
@@ -4474,6 +4475,7 @@ async function aaLoad(force = false) {
     const screens = md.screen_views || { rows: [] };
     const abandon = md.abandon_by_step || { rows: [] };
     const complete = md.booking_complete_detail || { rows: [] };
+    const abandonDetail = md.abandon_detail || { rows: [] };
     const services = md.top_services || { rows: [] };
     const recs = md.recommendations || { rows: [] };
     const notifs = md.notifications || { rows: [] };
@@ -4486,6 +4488,7 @@ async function aaLoad(force = false) {
     aaCache[ck('screen_views')] = screens;
     aaCache[ck('abandon_by_step')] = abandon;
     aaCache[ck('booking_complete_detail')] = complete;
+    aaCache[ck('abandon_detail')] = abandonDetail;
     aaCache[ck('top_services')] = services;
     aaCache[ck('recommendations')] = recs;
     aaCache[ck('notifications')] = notifs;
@@ -4496,6 +4499,7 @@ async function aaLoad(force = false) {
     aaFunnelData = funnel;
     aaAbandonData = abandon;
     aaCompleteData = complete;
+    aaAbandonDetailData = abandonDetail;
     aaServicesData = services;
 
     aaRenderKPIs(funnel, screens, health);
@@ -4755,6 +4759,83 @@ async function aaRenderDeptBody(dept, rows, cfg) {
             <div class="fu-bar-val">${count.toLocaleString()}</div>
           </div>`).join('')}
       </div>`;
+    }
+
+    // ── Items completed vs abandoned ─────────────────────────────────
+    // Aggregates booking_complete_detail and abandon_detail by service name.
+    // If service is missing / (not set) for this dept, surfaces an
+    // instrumentation gap notice rather than silently showing nothing.
+    const completedItems = {};
+    let completedHasService = false;
+    cRows.forEach(r => {
+      const svc = r['customEvent:service'];
+      if (svc && svc !== '(not set)' && svc.toLowerCase() !== 'unknown') {
+        completedHasService = true;
+        completedItems[svc] = (completedItems[svc] || 0) + r.eventCount;
+      }
+    });
+    const completedList = Object.entries(completedItems).sort((a,b) => b[1]-a[1]).slice(0, 10);
+
+    const abandonedItems = {};
+    let abandonedHasService = false;
+    const adRows = aaAbandonDetailData ? aaRows(aaAbandonDetailData).filter(r => r['customEvent:source_module'] === mod) : [];
+    adRows.forEach(r => {
+      const svc = r['customEvent:service'];
+      if (svc && svc !== '(not set)' && svc.toLowerCase() !== 'unknown') {
+        abandonedHasService = true;
+        abandonedItems[svc] = (abandonedItems[svc] || 0) + r.eventCount;
+      }
+    });
+    const abandonedList = Object.entries(abandonedItems).sort((a,b) => b[1]-a[1]).slice(0, 10);
+
+    // Decide what to show
+    const showCompletedTable = completedList.length > 0;
+    const showAbandonedTable = abandonedList.length > 0;
+    const showCompletedGap = totalCompletes > 0 && !completedHasService;
+    const showAbandonedGap = totalAbandons > 0 && !abandonedHasService;
+
+    if (showCompletedTable || showAbandonedTable || showCompletedGap || showAbandonedGap) {
+      richHTML += `<div style="display:grid;grid-template-columns:${showCompletedTable && showAbandonedTable ? '1fr 1fr' : '1fr'};gap:16px;margin-bottom:16px">`;
+
+      // Completed items
+      if (showCompletedTable) {
+        const maxC = completedList[0][1];
+        richHTML += `<div>
+          <div class="sec-lbl" style="margin-bottom:8px">✅ Items completed (${totalCompletes})</div>
+          ${completedList.map(([item, count]) => `
+            <div class="fu-bar-row">
+              <div class="fu-bar-label" style="font-size:11px">${item}</div>
+              <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/maxC*100)}%;background:var(--teal)"></div></div>
+              <div class="fu-bar-val">${count}</div>
+            </div>`).join('')}
+        </div>`;
+      } else if (showCompletedGap) {
+        richHTML += `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;font-size:11px;color:var(--amber-d)">
+          ⚠ <strong>Items completed: instrumentation gap</strong><br>
+          ${totalCompletes} booking_complete events fired but <code>service</code> field is missing. Engineering must attach item name to booking_complete events for this dept.
+        </div>`;
+      }
+
+      // Abandoned items
+      if (showAbandonedTable) {
+        const maxA = abandonedList[0][1];
+        richHTML += `<div>
+          <div class="sec-lbl" style="margin-bottom:8px">❌ Items abandoned (${totalAbandons})</div>
+          ${abandonedList.map(([item, count]) => `
+            <div class="fu-bar-row">
+              <div class="fu-bar-label" style="font-size:11px">${item}</div>
+              <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/maxA*100)}%;background:var(--amber)"></div></div>
+              <div class="fu-bar-val">${count}</div>
+            </div>`).join('')}
+        </div>`;
+      } else if (showAbandonedGap) {
+        richHTML += `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;font-size:11px;color:var(--amber-d)">
+          ⚠ <strong>Items abandoned: instrumentation gap</strong><br>
+          ${totalAbandons} booking_abandoned events fired but <code>service</code> field is missing. Engineering must attach item name to booking_abandoned events for this dept.
+        </div>`;
+      }
+
+      richHTML += `</div>`;
     }
   }
 

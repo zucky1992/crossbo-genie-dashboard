@@ -147,6 +147,24 @@ function buildReportBody(report, startDate, endDate) {
       limit: 500,
     },
 
+    // ── Booking abandoned enriched — what items get abandoned ─────────
+    abandon_detail: {
+      dateRanges: dateRange,
+      dimensions: [
+        { name: 'customEvent:source_module' },
+        { name: 'customEvent:category' },
+        { name: 'customEvent:service' },
+        { name: 'customEvent:step' },
+        { name: 'customEvent:total' },
+      ],
+      metrics: [{ name: 'eventCount' }],
+      dimensionFilter: {
+        filter: { fieldName: 'eventName', stringFilter: { value: 'booking_abandoned' } }
+      },
+      orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
+      limit: 500,
+    },
+
     // ── Revenue by dept (booking_complete total) ──────────────────────
     revenue_by_dept: {
       dateRanges: dateRange,
