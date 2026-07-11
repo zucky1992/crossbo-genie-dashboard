@@ -34,6 +34,27 @@
   --blue-l:#071829;--blue-d:#B5D4F4;
 }}
 html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--text);font-size:13px;line-height:1.5}
+
+/* ── Metric tooltips (v47.1) ─────────────────────────────────────────
+   Hover-triggered popup with definition + calculation + when to trust.
+   Use data-tt="key" attribute on any element to attach a tooltip.
+   Definitions are looked up from METRIC_DEFS below. ──────────────── */
+.tt-wrap{position:relative;display:inline-flex;align-items:center;gap:4px;cursor:help}
+.tt-icon{display:inline-flex;align-items:center;justify-content:center;width:12px;height:12px;border-radius:50%;background:var(--bg3);color:var(--text3);font-size:9px;font-weight:600;font-style:italic;line-height:1;font-family:Georgia,serif;flex-shrink:0;transition:background .15s,color .15s}
+.tt-wrap:hover .tt-icon{background:var(--teal);color:#fff}
+.tt-pop{position:absolute;bottom:calc(100% + 8px);left:0;z-index:1000;min-width:240px;max-width:340px;padding:10px 12px;background:var(--text);color:var(--bg);border-radius:var(--radius-sm);font-size:11px;line-height:1.5;box-shadow:0 4px 16px rgba(0,0,0,.15);opacity:0;visibility:hidden;transition:opacity .15s,visibility .15s;transition-delay:0s;pointer-events:none;font-weight:400;text-transform:none;letter-spacing:normal}
+.tt-wrap:hover .tt-pop{opacity:1;visibility:visible;transition-delay:.35s}
+.tt-pop-title{font-weight:600;color:var(--bg);margin-bottom:6px;font-size:11px}
+.tt-pop-def{color:var(--bg);opacity:.92;margin-bottom:8px}
+.tt-pop-calc{color:var(--bg);opacity:.7;font-size:10px;padding-top:6px;border-top:1px solid rgba(255,255,255,.15);margin-top:6px}
+.tt-pop-calc strong{opacity:.85;font-weight:500;text-transform:uppercase;letter-spacing:.5px;font-size:9px}
+.tt-pop-note{color:var(--amber-l);opacity:.9;font-size:10px;margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,.15)}
+.tt-pop-note strong{opacity:1;font-weight:600}
+/* Right-edge fix: if tooltip is near right edge, anchor to right */
+.tt-wrap.tt-right .tt-pop{left:auto;right:0}
+/* Compact variant for tight spaces */
+.tt-icon.tt-sm{width:10px;height:10px;font-size:8px}
+
 .shell{display:flex;height:100vh;overflow:hidden}
 .sidebar{width:var(--nav-w);flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto}
 .brand{padding:22px 20px 16px;border-bottom:1px solid var(--border)}
@@ -683,6 +704,19 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
     <!-- Section 1: Leadership KPIs -->
     <div class="kpi-row kpi-r4" id="aa-kpis" style="margin-bottom:16px"></div>
 
+    <!-- Portfolio Health section (v47) — sessions, users, per-hotel, entry sources -->
+    <div class="card" style="margin-bottom:16px" id="aa-portfolio-health">
+      <div class="card-head">
+        <div>
+          <div class="card-title">Portfolio Health</div>
+          <div class="card-sub">Where guests come from · how they enter · where they go</div>
+        </div>
+      </div>
+      <div id="aa-portfolio-body" style="padding:0 20px 20px">
+        <div class="fu-loading"><div class="fu-spinner"></div>Loading portfolio metrics...</div>
+      </div>
+    </div>
+
     <!-- Booking funnel hero -->
     <div class="card" style="margin-bottom:16px">
       <div class="card-head">
@@ -1148,6 +1182,137 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 'use strict';
+
+/* ══════════════════════════════════════════════════════════
+   METRIC TOOLTIPS (v47.1)
+   Reusable definition system for any metric label.
+   Usage: replace a plain label with `tt('key', 'Label text')`.
+   Definitions live in METRIC_DEFS below — key format is snake_case.
+   Wave 1: Portfolio Health metrics only.
+   Wave 2: Extend to all dashboard pages.
+══════════════════════════════════════════════════════════ */
+const METRIC_DEFS = {
+  // ── Portfolio Health section ──────────────────────────────────
+  sessions: {
+    title: 'Sessions',
+    def: 'A single visit to the app. Starts when the app opens, ends after 30 minutes of inactivity or when the app is closed.',
+    calc: 'GA4 session_start events. Same user opening the app twice with a break counts as 2 sessions.',
+  },
+  unique_users: {
+    title: 'Unique users',
+    def: 'Distinct individuals who used the app in the period, based on device ID.',
+    calc: 'GA4 totalUsers metric. If one guest uses the app on both phone and tablet, they count as 2 users.',
+    note: 'Cannot be linked to specific guest reservations without engineering adding guest identity to GA4.',
+  },
+  active_users: {
+    title: 'Active users',
+    def: 'Users who had at least one engaged session in the period.',
+    calc: 'GA4 activeUsers. Excludes users who opened the app briefly without engaging.',
+  },
+  engaged_sessions: {
+    title: 'Engaged sessions',
+    def: 'Sessions where the user spent 10+ seconds in the app, viewed 2+ screens, or triggered a conversion event.',
+    calc: 'GA4 auto-classifies each session at end. Reflects real usage vs accidental app opens.',
+  },
+  engagement_rate: {
+    title: 'Engagement rate',
+    def: 'Percentage of sessions that were engaged (real usage, not accidental opens).',
+    calc: 'engaged_sessions ÷ total_sessions × 100. Higher = guests actually using the app.',
+    note: 'Below 40% means many guests open the app then leave immediately.',
+  },
+  sessions_per_user: {
+    title: 'Sessions per user',
+    def: 'Average number of times each unique user opened the app in this period.',
+    calc: 'total_sessions ÷ unique_users. A single-stay guest typically has 3-8 sessions.',
+  },
+  screens_per_session: {
+    title: 'Screens per session',
+    def: 'Average number of different screens each session viewed.',
+    calc: 'screen_page_views ÷ total_sessions. Below 3 = shallow engagement.',
+  },
+  screen_views: {
+    title: 'Screen views',
+    def: 'Total count of any screen being loaded across all sessions.',
+    calc: 'GA4 screen_view events. Same screen viewed 3 times in one session = 3 screen views.',
+  },
+  session_to_booking: {
+    title: 'Session → booking conversion',
+    def: 'Percentage of sessions that resulted in at least one booking being started.',
+    calc: 'booking_start events ÷ total_sessions × 100. Excludes browsing-only sessions.',
+    note: 'Low absolute % is normal (guests browse many times before booking once).',
+  },
+  session_to_start_drop: {
+    title: 'Session → start drop',
+    def: 'Percentage of sessions that did NOT result in any booking activity.',
+    calc: '(total_sessions − booking_starts) ÷ total_sessions × 100.',
+    note: 'Includes guests who came to check info, chat with staff, or just browse.',
+  },
+  start_to_complete: {
+    title: 'Start → complete conversion',
+    def: 'Of guests who started a booking, percentage who completed it.',
+    calc: 'booking_complete ÷ booking_start × 100. This is where UX friction gets exposed.',
+    note: 'Below 25% suggests cart/checkout UX issues.',
+  },
+  booking_starts: {
+    title: 'Booking starts',
+    def: 'Number of times a guest began a booking flow (any department).',
+    calc: 'GA4 booking_start event count. Same guest starting twice = 2 starts.',
+  },
+  booking_completes: {
+    title: 'Booking completed',
+    def: 'Number of successful booking submissions.',
+    calc: 'GA4 booking_complete event count.',
+    note: 'Not always equal to actual delivered orders — depends on staff confirmation.',
+  },
+  booking_abandoned: {
+    title: 'Booking abandoned',
+    def: 'Number of booking flows started but not completed.',
+    calc: 'GA4 booking_abandoned event count. Fires when guest exits mid-flow.',
+  },
+  sessions_by_hotel: {
+    title: 'Sessions by hotel',
+    def: 'Breakdown of total sessions attributed to each hotel.',
+    calc: 'Uses the property user-property. If unset, session gets bucketed as "(not set)".',
+    note: 'Only works if engineering populates the property field on every session.',
+  },
+  entry_paths: {
+    title: 'Top entry paths',
+    def: 'Which screens guests come FROM when they start a booking.',
+    calc: 'source_screen dimension on booking_start events, e.g. home_widget, nav_bar, spotlight.',
+    note: 'If source_screen is empty (not set), we cannot tell how guests found the department.',
+  },
+  app_crashes: {
+    title: 'App crashes',
+    def: 'Number of unhandled exceptions that caused the app to crash.',
+    calc: 'GA4 app_exception events. Investigated in Crashlytics for stack traces.',
+    note: 'Below 30 = healthy. Above 100 = investigate immediately.',
+  },
+  conversion_rate: {
+    title: 'Conversion rate',
+    def: 'Percentage of booking starts that reached completion.',
+    calc: 'booking_complete ÷ booking_start × 100.',
+  },
+  drop_rate: {
+    title: 'Drop rate',
+    def: 'Percentage of booking starts that were abandoned (opposite of conversion).',
+    calc: 'booking_abandoned ÷ booking_start × 100.',
+  },
+};
+
+// Renders a label with an ⓘ icon that shows tooltip on hover.
+// key = definition key from METRIC_DEFS, labelHTML = the visible label text.
+// Second arg is HTML-safe — pass plain text unless you need styling.
+function tt(key, labelHTML) {
+  const d = METRIC_DEFS[key];
+  if (!d) return labelHTML; // graceful fallback — undefined key just shows label
+  const noteHTML = d.note ? `<div class="tt-pop-note"><strong>Note:</strong> ${d.note}</div>` : '';
+  return `<span class="tt-wrap">${labelHTML}<span class="tt-icon" aria-hidden="true">i</span><span class="tt-pop">
+    <div class="tt-pop-title">${d.title}</div>
+    <div class="tt-pop-def">${d.def}</div>
+    <div class="tt-pop-calc"><strong>How it's calculated</strong><br>${d.calc}</div>
+    ${noteHTML}
+  </span></span>`;
+}
 
 /* ══════════════════════════════════════════════════════════
    HOTEL REGISTRY
@@ -4366,6 +4531,7 @@ let aaAbandonData = null;
 let aaCompleteData = null;
 let aaAbandonDetailData = null;
 let aaServicesData = null;
+let aaEntrySourceData = null;
 
 // Hotel UUID → hotel_id param mapping
 const HOTEL_IDS = {
@@ -4462,7 +4628,7 @@ async function aaLoad(force = false) {
   try {
     // Single multi-call: all reports fetched SEQUENTIALLY server-side in one
     // request. Bounds GA4 concurrency to 1 per call, avoiding 429 rate limits.
-    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,abandon_detail,top_services,recommendations,notifications,app_health';
+    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,abandon_detail,top_services,recommendations,notifications,app_health,portfolio_metrics,sessions_by_hotel,dept_entry_source';
     let multiUrl = `${AA_FN}?multi=${reportList}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
     if (aaHotelId) multiUrl += `&hotelId=${aaHotelId}`;
     if (aaExcludeTest) multiUrl += `&excludeTest=true`;
@@ -4481,6 +4647,9 @@ async function aaLoad(force = false) {
     const recs = md.recommendations || { rows: [] };
     const notifs = md.notifications || { rows: [] };
     const health = md.app_health || { rows: [] };
+    const portfolioMetrics = md.portfolio_metrics || { rows: [] };
+    const sessionsByHotel = md.sessions_by_hotel || { rows: [] };
+    const deptEntrySource = md.dept_entry_source || { rows: [] };
 
     // Populate client cache so dept-card lazy loads (e.g. Store funnel reusing
     // screen_views) don't re-hit the API.
@@ -4494,6 +4663,9 @@ async function aaLoad(force = false) {
     aaCache[ck('recommendations')] = recs;
     aaCache[ck('notifications')] = notifs;
     aaCache[ck('app_health')] = health;
+    aaCache[ck('portfolio_metrics')] = portfolioMetrics;
+    aaCache[ck('sessions_by_hotel')] = sessionsByHotel;
+    aaCache[ck('dept_entry_source')] = deptEntrySource;
 
     const anyFailed = Object.values(md).some(v => v && v.error);
 
@@ -4502,8 +4674,10 @@ async function aaLoad(force = false) {
     aaCompleteData = complete;
     aaAbandonDetailData = abandonDetail;
     aaServicesData = services;
+    aaEntrySourceData = deptEntrySource;
 
     aaRenderKPIs(funnel, screens, health);
+    aaRenderPortfolioHealth(portfolioMetrics, sessionsByHotel, funnel, screens, deptEntrySource);
     aaRenderFunnel(funnel);
     aaRenderDeptPills(funnel, screens);
     aaRenderRecs(recs);
@@ -4536,11 +4710,158 @@ function aaRenderKPIs(funnelData, screensData, healthData) {
   const convColor = convRate >= 25 ? 'var(--teal)' : convRate >= 15 ? 'var(--amber)' : 'var(--red)';
   const crashColor = crashes > 100 ? 'var(--red)' : crashes > 30 ? 'var(--amber)' : 'var(--teal)';
   document.getElementById('aa-kpis').innerHTML = `
-    <div class="kpi"><div class="kpi-label">Booking starts</div><div class="kpi-val">${starts.toLocaleString()}</div><div class="kpi-delta">guests who began booking</div></div>
-    <div class="kpi"><div class="kpi-label">Completed</div><div class="kpi-val">${completes.toLocaleString()}</div><div class="kpi-delta" style="color:${convColor}">${convRate}% conversion rate</div></div>
-    <div class="kpi"><div class="kpi-label">Abandoned</div><div class="kpi-val">${abandoned.toLocaleString()}</div><div class="kpi-delta dn">${dropRate}% left without completing</div></div>
-    <div class="kpi"><div class="kpi-label">App crashes</div><div class="kpi-val">${crashes.toLocaleString()}</div><div class="kpi-delta" style="color:${crashColor}">app_exception events</div></div>`;
+    <div class="kpi"><div class="kpi-label">${tt('booking_starts', 'Booking starts')}</div><div class="kpi-val">${starts.toLocaleString()}</div><div class="kpi-delta">guests who began booking</div></div>
+    <div class="kpi"><div class="kpi-label">${tt('booking_completes', 'Completed')}</div><div class="kpi-val">${completes.toLocaleString()}</div><div class="kpi-delta" style="color:${convColor}">${tt('conversion_rate', convRate + '% conversion rate')}</div></div>
+    <div class="kpi"><div class="kpi-label">${tt('booking_abandoned', 'Abandoned')}</div><div class="kpi-val">${abandoned.toLocaleString()}</div><div class="kpi-delta dn">${tt('drop_rate', dropRate + '% left without completing')}</div></div>
+    <div class="kpi"><div class="kpi-label">${tt('app_crashes', 'App crashes')}</div><div class="kpi-val">${crashes.toLocaleString()}</div><div class="kpi-delta" style="color:${crashColor}">app_exception events</div></div>`;
 }
+
+// ────────────────────────────────────────────────────────────────────
+// Portfolio Health section (v47)
+// Shows session/user metrics, per-hotel breakdown, portfolio-wide funnel
+// from sessions → dept opens → booking_start → complete, and entry sources.
+// Handles instrumentation gaps gracefully (source_screen may be unpopulated).
+// ────────────────────────────────────────────────────────────────────
+function aaRenderPortfolioHealth(metricsData, sessionsData, funnelData, screensData, entrySourceData) {
+  const body = document.getElementById('aa-portfolio-body');
+  if (!body) return;
+
+  // ── 1. Portfolio-wide KPIs ────────────────────────────────────────
+  const mRows = aaRows(metricsData);
+  const m = mRows[0] || {};
+  const sessions = parseInt(m.sessions || 0);
+  const totalUsers = parseInt(m.totalUsers || 0);
+  const activeUsers = parseInt(m.activeUsers || 0);
+  const engagedSessions = parseInt(m.engagedSessions || 0);
+  const screenViews = parseInt(m.screenPageViews || 0);
+  const sessionsPerUser = totalUsers > 0 ? (sessions / totalUsers).toFixed(1) : '0';
+  const engagementRate = sessions > 0 ? Math.round(engagedSessions / sessions * 100) : 0;
+  const screensPerSession = sessions > 0 ? (screenViews / sessions).toFixed(1) : '0';
+
+  // ── 2. Sessions by hotel ──────────────────────────────────────────
+  const sRows = aaRows(sessionsData);
+  const hotelSessions = sRows
+    .filter(r => r['customUser:property'] && r['customUser:property'] !== '(not set)')
+    .map(r => ({
+      hotel: r['customUser:property'],
+      sessions: parseInt(r.sessions || 0),
+      users: parseInt(r.totalUsers || 0)
+    }))
+    .sort((a, b) => b.sessions - a.sessions);
+  const maxHotelSessions = hotelSessions.length > 0 ? hotelSessions[0].sessions : 1;
+  const notSetHotel = sRows.find(r => r['customUser:property'] === '(not set)');
+  const notSetSessions = notSetHotel ? parseInt(notSetHotel.sessions || 0) : 0;
+
+  // ── 3. Portfolio funnel: sessions → booking_start → complete ──────
+  const fRows = aaRows(funnelData);
+  const starts = fRows.filter(r => r.eventName === 'booking_start').reduce((a, r) => a + r.eventCount, 0);
+  const completes = fRows.filter(r => r.eventName === 'booking_complete').reduce((a, r) => a + r.eventCount, 0);
+  const sessionToStart = sessions > 0 ? (starts / sessions * 100).toFixed(1) : '0';
+  const startToComplete = starts > 0 ? Math.round(completes / starts * 100) : 0;
+
+  // ── 4. Entry sources — how guests enter departments ───────────────
+  const eRows = entrySourceData ? aaRows(entrySourceData) : [];
+  const entryBySource = {};
+  let sourceHasData = false;
+  eRows.forEach(r => {
+    const src = r['customEvent:source_screen'];
+    if (src && src !== '(not set)') {
+      sourceHasData = true;
+      entryBySource[src] = (entryBySource[src] || 0) + r.eventCount;
+    }
+  });
+  const totalWithSource = Object.values(entryBySource).reduce((a, b) => a + b, 0);
+  const totalBookingStarts = eRows.reduce((a, r) => a + r.eventCount, 0);
+  const entryList = Object.entries(entryBySource).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+  // ── Assemble HTML ─────────────────────────────────────────────────
+  let html = '';
+
+  // KPI strip
+  html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+    <div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
+      <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:6px">${tt('sessions', 'Sessions')}</div>
+      <div style="font-size:24px;font-weight:600">${sessions.toLocaleString()}</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">${tt('screens_per_session', screensPerSession + ' screens per session')}</div>
+    </div>
+    <div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
+      <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:6px">${tt('unique_users', 'Unique users')}</div>
+      <div style="font-size:24px;font-weight:600">${totalUsers.toLocaleString()}</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">${tt('sessions_per_user', sessionsPerUser + ' sessions per user')}</div>
+    </div>
+    <div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
+      <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:6px">${tt('engagement_rate', 'Engagement rate')}</div>
+      <div style="font-size:24px;font-weight:600">${engagementRate}%</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">${tt('engaged_sessions', engagedSessions.toLocaleString() + ' engaged sessions')}</div>
+    </div>
+    <div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm) tt-right">
+      <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:6px">${tt('session_to_booking', 'Session → booking')}</div>
+      <div style="font-size:24px;font-weight:600">${sessionToStart}%</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">${starts.toLocaleString()} starts from ${sessions.toLocaleString()} sessions</div>
+    </div>
+  </div>`;
+
+  // Portfolio funnel (sessions → booking_start → complete)
+  html += `<div style="margin-bottom:24px">
+    <div class="sec-lbl" style="margin-bottom:10px">Portfolio funnel · session → booking</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+      <div style="text-align:center;padding:16px 8px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
+        <div style="font-size:24px;font-weight:600">${sessions.toLocaleString()}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:6px">${tt('sessions', 'Sessions opened')}</div>
+      </div>
+      <div style="text-align:center;padding:16px 8px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
+        <div style="font-size:24px;font-weight:600">${starts.toLocaleString()}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:6px">${tt('booking_starts', 'Booking started')}</div>
+        <div style="font-size:10px;color:var(--red);margin-top:2px">${tt('session_to_start_drop', (sessions > 0 ? Math.round((1 - starts/sessions) * 100) : 0) + '% drop')}</div>
+      </div>
+      <div style="text-align:center;padding:16px 8px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
+        <div style="font-size:24px;font-weight:600">${completes.toLocaleString()}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:6px">${tt('booking_completes', 'Booking completed')}</div>
+        <div style="font-size:10px;color:${startToComplete >= 25 ? 'var(--teal)' : 'var(--amber)'};margin-top:2px">${tt('start_to_complete', startToComplete + '% conv from starts')}</div>
+      </div>
+    </div>
+  </div>`;
+
+  // Sessions by hotel bar chart
+  if (hotelSessions.length > 0) {
+    html += `<div style="margin-bottom:24px">
+      <div class="sec-lbl" style="margin-bottom:10px">${tt('sessions_by_hotel', 'Sessions by hotel')}</div>
+      ${hotelSessions.map(h => `
+        <div class="fu-bar-row">
+          <div class="fu-bar-label" style="font-size:11px;min-width:140px">${h.hotel}</div>
+          <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(h.sessions/maxHotelSessions*100)}%;background:var(--teal)"></div></div>
+          <div class="fu-bar-val" style="min-width:120px;text-align:right">${h.sessions.toLocaleString()} · ${h.users.toLocaleString()} users</div>
+        </div>`).join('')}
+      ${notSetSessions > 0 ? `<div style="margin-top:8px;font-size:10px;color:var(--text3)">Plus ${notSetSessions.toLocaleString()} sessions with no property attributed (${Math.round(notSetSessions / (notSetSessions + hotelSessions.reduce((a,h)=>a+h.sessions,0)) * 100)}% of total). Instrumentation gap.</div>` : ''}
+    </div>`;
+  } else if (sRows.length > 0) {
+    html += `<div style="margin-bottom:24px;background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:12px;font-size:11px;color:var(--amber-d)">
+      ⚠ <strong>Sessions per hotel: instrumentation gap.</strong> ${sRows.reduce((a,r)=>a+parseInt(r.sessions||0),0).toLocaleString()} sessions found but hotel property dimension is empty. The <code>property</code> user-property was registered but may not be populated on all events yet.
+    </div>`;
+  }
+
+  // Entry sources
+  if (sourceHasData && entryList.length > 0) {
+    const maxEntry = entryList[0][1];
+    html += `<div style="margin-bottom:8px">
+      <div class="sec-lbl" style="margin-bottom:10px">${tt('entry_paths', 'Top entry paths · where guests enter booking flow from')}</div>
+      ${entryList.map(([src, count]) => `
+        <div class="fu-bar-row">
+          <div class="fu-bar-label" style="font-size:11px;min-width:140px">${src}</div>
+          <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/maxEntry*100)}%;background:var(--teal)"></div></div>
+          <div class="fu-bar-val" style="min-width:80px;text-align:right">${count.toLocaleString()} · ${Math.round(count/totalWithSource*100)}%</div>
+        </div>`).join('')}
+      <div style="margin-top:8px;font-size:10px;color:var(--text3)">${totalWithSource.toLocaleString()} of ${totalBookingStarts.toLocaleString()} booking_start events (${Math.round(totalWithSource/totalBookingStarts*100)}%) have source_screen populated.</div>
+    </div>`;
+  } else if (totalBookingStarts > 0) {
+    html += `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:12px;font-size:11px;color:var(--amber-d)">
+      ⚠ <strong>Entry paths: instrumentation gap.</strong> ${totalBookingStarts.toLocaleString()} booking_start events fired but <code>source_screen</code> is not populated. Engineering needs to attach source_screen (where user came from: home_widget, nav_bar, spotlight, deep_link, etc.) to booking_start events to enable this analysis.
+    </div>`;
+  }
+
+  body.innerHTML = html;
+}
+
 
 function aaRenderFunnel(data) {
   const rows = aaRows(data);
@@ -4760,6 +5081,45 @@ async function aaRenderDeptBody(dept, rows, cfg) {
             <div class="fu-bar-val">${count.toLocaleString()}</div>
           </div>`).join('')}
       </div>`;
+    }
+
+    // ── Entry source · where guests enter this dept from ─────────────
+    // Uses dept_entry_source report. Filters to this dept's source_module,
+    // groups by source_screen. If source_screen is (not set), surfaces the
+    // instrumentation gap rather than showing an empty section.
+    if (aaEntrySourceData) {
+      const entryRows = aaRows(aaEntrySourceData).filter(r => r['customEvent:source_module'] === mod);
+      const entryBySrc = {};
+      let entryHasSource = false;
+      let entryTotal = 0;
+      entryRows.forEach(r => {
+        const src = r['customEvent:source_screen'];
+        entryTotal += r.eventCount;
+        if (src && src !== '(not set)') {
+          entryHasSource = true;
+          entryBySrc[src] = (entryBySrc[src] || 0) + r.eventCount;
+        }
+      });
+      const entryList = Object.entries(entryBySrc).sort((a,b) => b[1]-a[1]).slice(0, 8);
+
+      if (entryList.length > 0) {
+        const maxE = entryList[0][1];
+        const withSrcTotal = Object.values(entryBySrc).reduce((a,b) => a+b, 0);
+        richHTML += `<div style="margin-bottom:16px">
+          <div class="sec-lbl" style="margin-bottom:8px">Where guests enter this dept from · source screen</div>
+          ${entryList.map(([src, count]) => `
+            <div class="fu-bar-row">
+              <div class="fu-bar-label" style="font-size:11px">${src}</div>
+              <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/maxE*100)}%;background:var(--blue)"></div></div>
+              <div class="fu-bar-val">${count.toLocaleString()}</div>
+              <div class="fu-bar-pct">${Math.round(count/withSrcTotal*100)}%</div>
+            </div>`).join('')}
+        </div>`;
+      } else if (entryTotal > 0 && !entryHasSource) {
+        richHTML += `<div style="margin-bottom:16px;background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;font-size:11px;color:var(--amber-d)">
+          ⚠ <strong>Entry source: instrumentation gap.</strong> ${entryTotal.toLocaleString()} booking_start events fired for this dept but <code>source_screen</code> is empty. Engineering needs to attach source_screen to booking events to enable per-dept entry analysis.
+        </div>`;
+      }
     }
 
     // ── Items completed vs abandoned ─────────────────────────────────
@@ -5023,12 +5383,20 @@ async function aaRenderDeptBody(dept, rows, cfg) {
     </div>`;
 
   // Special notes per dept
+  // Notes are context-sensitive — some only apply to specific hotels.
+  // The SPA closure is Casa Cook only; showing it on all hotels created
+  // confusion in leadership review.
+  const CASA_COOK_ID = '3e84b99c-348e-4b04-93c5-4b3c89fc5edf';
+  const CHEDI_ID = '1aed1dad-2799-4f1f-bce0-89324419d406';
+  const showSpaClosure = !aaHotelId || aaHotelId === CASA_COOK_ID;
+  const showStoreNote = !aaHotelId || aaHotelId === CHEDI_ID;
+
   const NOTES = {
     chat: `<div style="background:var(--teal-l);border:1px solid var(--teal);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--teal-d)">Chat tracks: back/home nav, suggested prompt taps (with text + position), and message sends (with text).</div>`,
     taxi: `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Taxi has dedicated events (blue label): taxi_time_selected and taxi_vehicle_selected — richer than just booking_complete.</div>`,
     housekeeping: `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Laundry order total is always 0 (app bug). Housekeeping fires an <code>order</code> event with real value when request is placed.</div>`,
-    spa: `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Casa Cook SPA closed Jun 1 – Oct 15. Data is pre-closure. BMS SPA (Chedi only) may show separately. Instrument before reopening.</div>`,
-    store: `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Store is Chedi-only. store_item_added_to_cart fires with item name + price. "You may also like" on product detail is not yet tracked.</div><div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ <strong>Data quality warning:</strong> No internal-user filter exists yet. Numbers may include engineering/product testing. With only ~2 completed orders in 90 days, even 1 test order skews conversion by 50%. Enable "Exclude test data" once the environment dimension is active (~48h).</div>`,
+    spa: showSpaClosure ? `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Casa Cook SPA closed Jun 1 – Oct 15. Data is pre-closure. BMS SPA (Chedi only) may show separately. Instrument before reopening.</div>` : '',
+    store: showStoreNote ? `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Store is Chedi-only. store_item_added_to_cart fires with item name + price. "You may also like" on product detail is not yet tracked.</div><div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ <strong>Data quality warning:</strong> No internal-user filter exists yet. Numbers may include engineering/product testing. With only ~2 completed orders in 90 days, even 1 test order skews conversion by 50%. Enable "Exclude test data" once the environment dimension is active (~48h).</div>` : `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Store is only available at The Chedi. Data will be empty when viewing other hotels.</div>`,
   };
 
   body.innerHTML = (NOTES[dept] || '') + richHTML + interactionsHTML;

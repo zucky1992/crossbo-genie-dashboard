@@ -446,6 +446,48 @@ function buildReportBody(report, startDate, endDate) {
       orderBys: [{ dimension: { dimensionName: 'date' } }],
       limit: 500,
     },
+
+    // ── Portfolio metrics — total sessions, users, engagement ──────────
+    // Powers the Portfolio Health section at top of App Analytics.
+    portfolio_metrics: {
+      dateRanges: dateRange,
+      dimensions: [],
+      metrics: [
+        { name: 'sessions' },
+        { name: 'totalUsers' },
+        { name: 'activeUsers' },
+        { name: 'engagedSessions' },
+        { name: 'screenPageViews' },
+      ],
+      limit: 1,
+    },
+
+    // ── Sessions by hotel — property-scoped custom dimension ───────────
+    // property = hotel name (registered dimension). Sorted by session count desc.
+    sessions_by_hotel: {
+      dateRanges: dateRange,
+      dimensions: [{ name: 'customUser:property' }],
+      metrics: [{ name: 'sessions' }, { name: 'totalUsers' }],
+      orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
+      limit: 20,
+    },
+
+    // ── Department entry source — where guests enter each dept from ────
+    // source_screen tells us: home widget, nav bar, deep link, etc.
+    // If source_screen is (not set), it's an instrumentation gap.
+    dept_entry_source: {
+      dateRanges: dateRange,
+      dimensions: [
+        { name: 'customEvent:source_module' },
+        { name: 'customEvent:source_screen' },
+      ],
+      metrics: [{ name: 'eventCount' }],
+      dimensionFilter: {
+        filter: { fieldName: 'eventName', stringFilter: { value: 'booking_start' } }
+      },
+      orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
+      limit: 200,
+    },
   };
 
   if (!reports[report]) throw new Error(`Unknown report: ${report}`);
