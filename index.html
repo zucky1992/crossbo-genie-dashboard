@@ -4721,7 +4721,40 @@ function aaRenderKPIs(funnelData, screensData, healthData) {
 // Shows session/user metrics, per-hotel breakdown, portfolio-wide funnel
 // from sessions → dept opens → booking_start → complete, and entry sources.
 // Handles instrumentation gaps gracefully (source_screen may be unpopulated).
+//
+// v47.1 fixes:
+//   - Whitelist real hotel names to filter out junk ("Hotel", foreign props)
+//   - Hide "Sessions by hotel" when a specific hotel is selected
+//   - Use screenPageViewsPerSession metric (was reading wrong field)
+//   - Surface data-hygiene warning when junk values are dropped
 // ────────────────────────────────────────────────────────────────────
+
+// Canonical list of Orascom El Gouna hotels. Anything else in the property
+// dimension is either a test value, a foreign GA4 project bleeding into ours,
+// or a typo. We drop them but surface the count so engineering can investigate.
+const VALID_HOTEL_NAMES = new Set([
+  "Cook's Club",
+  'Cook\u2019s Club',                    // curly apostrophe variant
+  'Casa Cook El Gouna',
+  'Casa Cook',
+  'Steigenberger Golf Resort',
+  'Steigenberger Golf Resort El Gouna',
+  'Steigenberger',
+  'The Chedi El Gouna',
+  'The Chedi',
+  'Ancient Sands Golf Resort',
+  'Ancient Sands',
+  'Sultan Bey Hotel',
+  'Sultan Bey',
+  'Mosaique',
+  "Captain's Inn",
+  'Captain\u2019s Inn',
+  'Ali Pasha',
+  'Fanadir',
+  "Turtle's Inn",
+  'Turtle\u2019s Inn',
+]);
+
 function aaRenderPortfolioHealth(metricsData, sessionsData, funnelData, screensData, entrySourceData) {
   const body = document.getElementById('aa-portfolio-body');
   if (!body) return;
@@ -4734,14 +4767,29 @@ function aaRenderPortfolioHealth(metricsData, sessionsData, funnelData, screensD
   const activeUsers = parseInt(m.activeUsers || 0);
   const engagedSessions = parseInt(m.engagedSessions || 0);
   const screenViews = parseInt(m.screenPageViews || 0);
+  // Prefer GA4's derived metric when available; fall back to computing it.
+  // If screenPageViews is 0, screen_view events aren't instrumented at all.
+  const screensPerSession = m.screenPageViewsPerSession
+    ? parseFloat(m.screenPageViewsPerSession).toFixed(1)
+    : (sessions > 0 ? (screenViews / sessions).toFixed(1) : '0');
   const sessionsPerUser = totalUsers > 0 ? (sessions / totalUsers).toFixed(1) : '0';
   const engagementRate = sessions > 0 ? Math.round(engagedSessions / sessions * 100) : 0;
-  const screensPerSession = sessions > 0 ? (screenViews / sessions).toFixed(1) : '0';
+  const hasScreenViews = screenViews > 0;
 
-  // ── 2. Sessions by hotel ──────────────────────────────────────────
+  // ── 2. Sessions by hotel — filter out junk values ─────────────────
   const sRows = aaRows(sessionsData);
+  let junkSessions = 0;
+  let junkValues = [];
   const hotelSessions = sRows
-    .filter(r => r['customUser:property'] && r['customUser:property'] !== '(not set)')
+    .filter(r => {
+      const prop = r['customUser:property'];
+      if (!prop || prop === '(not set)') return false;
+      if (VALID_HOTEL_NAMES.has(prop)) return true;
+      // Log junk for the warning
+      junkSessions += parseInt(r.sessions || 0);
+      if (!junkValues.includes(prop)) junkValues.push(prop);
+      return false;
+    })
     .map(r => ({
       hotel: r['customUser:property'],
       sessions: parseInt(r.sessions || 0),
@@ -4751,6 +4799,10 @@ function aaRenderPortfolioHealth(metricsData, sessionsData, funnelData, screensD
   const maxHotelSessions = hotelSessions.length > 0 ? hotelSessions[0].sessions : 1;
   const notSetHotel = sRows.find(r => r['customUser:property'] === '(not set)');
   const notSetSessions = notSetHotel ? parseInt(notSetHotel.sessions || 0) : 0;
+  // Only show sessions-by-hotel when viewing All Hotels (portfolio-wide).
+  // If viewing a single hotel, this chart is redundant/misleading because the
+  // hotel filter doesn't apply cleanly to session-scoped metrics anyway.
+  const showSessionsByHotel = !aaHotelId;
 
   // ── 3. Portfolio funnel: sessions → booking_start → complete ──────
   const fRows = aaRows(funnelData);
@@ -4782,7 +4834,7 @@ function aaRenderPortfolioHealth(metricsData, sessionsData, funnelData, screensD
     <div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
       <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:6px">${tt('sessions', 'Sessions')}</div>
       <div style="font-size:24px;font-weight:600">${sessions.toLocaleString()}</div>
-      <div style="font-size:11px;color:var(--text3);margin-top:4px">${tt('screens_per_session', screensPerSession + ' screens per session')}</div>
+      <div style="font-size:11px;color:${hasScreenViews ? 'var(--text3)' : 'var(--amber-d)'};margin-top:4px">${hasScreenViews ? tt('screens_per_session', screensPerSession + ' screens per session') : '⚠ screen_view events not instrumented'}</div>
     </div>
     <div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
       <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:6px">${tt('unique_users', 'Unique users')}</div>
@@ -4822,22 +4874,27 @@ function aaRenderPortfolioHealth(metricsData, sessionsData, funnelData, screensD
     </div>
   </div>`;
 
-  // Sessions by hotel bar chart
-  if (hotelSessions.length > 0) {
-    html += `<div style="margin-bottom:24px">
-      <div class="sec-lbl" style="margin-bottom:10px">${tt('sessions_by_hotel', 'Sessions by hotel')}</div>
-      ${hotelSessions.map(h => `
-        <div class="fu-bar-row">
-          <div class="fu-bar-label" style="font-size:11px;min-width:140px">${h.hotel}</div>
-          <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(h.sessions/maxHotelSessions*100)}%;background:var(--teal)"></div></div>
-          <div class="fu-bar-val" style="min-width:120px;text-align:right">${h.sessions.toLocaleString()} · ${h.users.toLocaleString()} users</div>
-        </div>`).join('')}
-      ${notSetSessions > 0 ? `<div style="margin-top:8px;font-size:10px;color:var(--text3)">Plus ${notSetSessions.toLocaleString()} sessions with no property attributed (${Math.round(notSetSessions / (notSetSessions + hotelSessions.reduce((a,h)=>a+h.sessions,0)) * 100)}% of total). Instrumentation gap.</div>` : ''}
-    </div>`;
-  } else if (sRows.length > 0) {
-    html += `<div style="margin-bottom:24px;background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:12px;font-size:11px;color:var(--amber-d)">
-      ⚠ <strong>Sessions per hotel: instrumentation gap.</strong> ${sRows.reduce((a,r)=>a+parseInt(r.sessions||0),0).toLocaleString()} sessions found but hotel property dimension is empty. The <code>property</code> user-property was registered but may not be populated on all events yet.
-    </div>`;
+  // Sessions by hotel bar chart — portfolio-wide only.
+  // When a specific hotel is selected, this chart isn't meaningful (hotel
+  // filter doesn't apply cleanly to session-scoped metrics), so we hide it.
+  if (showSessionsByHotel) {
+    if (hotelSessions.length > 0) {
+      html += `<div style="margin-bottom:24px">
+        <div class="sec-lbl" style="margin-bottom:10px">${tt('sessions_by_hotel', 'Sessions by hotel')}</div>
+        ${hotelSessions.map(h => `
+          <div class="fu-bar-row">
+            <div class="fu-bar-label" style="font-size:11px;min-width:140px">${h.hotel}</div>
+            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(h.sessions/maxHotelSessions*100)}%;background:var(--teal)"></div></div>
+            <div class="fu-bar-val" style="min-width:120px;text-align:right">${h.sessions.toLocaleString()} · ${h.users.toLocaleString()} users</div>
+          </div>`).join('')}
+        ${notSetSessions > 0 ? `<div style="margin-top:8px;font-size:10px;color:var(--text3)">Plus ${notSetSessions.toLocaleString()} sessions with no property attributed. Engineering must populate the <code>property</code> user-property on every session for full coverage.</div>` : ''}
+        ${junkSessions > 0 ? `<div style="margin-top:8px;background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:8px 10px;font-size:10px;color:var(--amber-d)">⚠ <strong>${junkSessions.toLocaleString()} sessions</strong> attributed to unrecognized properties: ${junkValues.slice(0, 5).map(v => `<code>${v}</code>`).join(', ')}${junkValues.length > 5 ? ` +${junkValues.length - 5} more` : ''}. Either test data, cross-project bleed, or misconfigured <code>property</code> values. Engineering ticket.</div>` : ''}
+      </div>`;
+    } else if (sRows.length > 0) {
+      html += `<div style="margin-bottom:24px;background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:12px;font-size:11px;color:var(--amber-d)">
+        ⚠ <strong>Sessions per hotel: instrumentation gap.</strong> ${sRows.reduce((a,r)=>a+parseInt(r.sessions||0),0).toLocaleString()} sessions found but hotel property dimension is empty or contains only unrecognized values. The <code>property</code> user-property was registered but may not be populated on all events yet.
+      </div>`;
+    }
   }
 
   // Entry sources

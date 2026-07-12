@@ -449,6 +449,8 @@ function buildReportBody(report, startDate, endDate) {
 
     // ── Portfolio metrics — total sessions, users, engagement ──────────
     // Powers the Portfolio Health section at top of App Analytics.
+    // Note: screenPageViewsPerSession is a GA4 built-in derived metric.
+    // If screen_view events don't fire in the app, this returns 0.
     portfolio_metrics: {
       dateRanges: dateRange,
       dimensions: [],
@@ -458,6 +460,7 @@ function buildReportBody(report, startDate, endDate) {
         { name: 'activeUsers' },
         { name: 'engagedSessions' },
         { name: 'screenPageViews' },
+        { name: 'screenPageViewsPerSession' },
       ],
       limit: 1,
     },
