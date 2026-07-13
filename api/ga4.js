@@ -491,6 +491,39 @@ function buildReportBody(report, startDate, endDate) {
       orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
       limit: 200,
     },
+    // ── Daily sparkline metrics — session-level daily time series ──────
+    // Powers sparkline charts on hero KPI tiles. Returns one row per day
+    // with sessions, users, engaged sessions, and screen views. Rendered
+    // client-side as small line charts inside each KPI tile.
+    daily_sparkline: {
+      dateRanges: dateRange,
+      dimensions: [{ name: 'date' }],
+      metrics: [
+        { name: 'sessions' },
+        { name: 'totalUsers' },
+        { name: 'engagedSessions' },
+      ],
+      orderBys: [{ dimension: { dimensionName: 'date' } }],
+      limit: 200,
+    },
+
+    // ── Daily booking sparkline — event-based daily time series ────────
+    // For starts / completes / abandons / crashes sparklines.
+    daily_events_sparkline: {
+      dateRanges: dateRange,
+      dimensions: [{ name: 'date' }, { name: 'eventName' }],
+      metrics: [{ name: 'eventCount' }],
+      dimensionFilter: {
+        orGroup: { expressions: [
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'booking_start' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'booking_complete' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'booking_abandoned' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'app_exception' } } },
+        ]}
+      },
+      orderBys: [{ dimension: { dimensionName: 'date' } }],
+      limit: 800,
+    },
   };
 
   if (!reports[report]) throw new Error(`Unknown report: ${report}`);
@@ -508,7 +541,7 @@ module.exports = async (req, res) => {
     const keyRaw = process.env.GA4_SERVICE_ACCOUNT_KEY;
     if (!keyRaw) throw new Error('GA4_SERVICE_ACCOUNT_KEY env var not set');
     const serviceAccount = JSON.parse(keyRaw);
-    const { report = 'screen_views', startDate = '30daysAgo', endDate = 'today', hotelId, excludeTest = 'false', multi } = req.query || {};
+    const { report = 'screen_views', startDate = '30daysAgo', endDate = 'today', prevStartDate, prevEndDate, hotelId, excludeTest = 'false', multi } = req.query || {};
 
     // Shared filter application
     function applyFilters(body) {
@@ -526,23 +559,45 @@ module.exports = async (req, res) => {
     // ── MULTI MODE: fetch several reports SEQUENTIALLY in one call ──
     // Sequential = max 1 concurrent GA4 request per invocation, avoiding the
     // 10-concurrent-request limit that causes 429s on parallel bursts.
+    //
+    // v48: When prevStartDate + prevEndDate are provided, also fetch the same
+    // report set for the previous window and return under `previous` key.
+    // Used for delta arrows on hero KPIs. Doubles GA4 calls when active but
+    // is still bounded to sequential execution.
     if (multi) {
       const names = multi.split(',').map(s => s.trim()).filter(Boolean);
-      const cacheKey = `multi:${names.join(',')}:${startDate}:${endDate}:${hotelId||''}:${excludeTest}`;
+      const wantPrev = prevStartDate && prevEndDate;
+      const cacheKey = `multi:${names.join(',')}:${startDate}:${endDate}:${wantPrev?prevStartDate+':'+prevEndDate:''}:${hotelId||''}:${excludeTest}`;
       if (_cache[cacheKey] && Date.now() - _cache[cacheKey].ts < CACHE_TTL) {
         res.status(200).json(_cache[cacheKey].data); return;
       }
 
       const token = await getAccessToken(serviceAccount);
-      const result = {};
+      const current = {};
+      const previous = {};
+      // Fetch current-window reports first (sequential)
       for (const name of names) {
         try {
           const body = applyFilters(buildReportBody(name, startDate, endDate));
-          result[name] = await runReport(token, body, 0);
+          current[name] = await runReport(token, body, 0);
         } catch (e) {
-          result[name] = { error: e.message, rows: [] };
+          current[name] = { error: e.message, rows: [] };
         }
       }
+      // Then previous-window reports if requested
+      if (wantPrev) {
+        for (const name of names) {
+          try {
+            const body = applyFilters(buildReportBody(name, prevStartDate, prevEndDate));
+            previous[name] = await runReport(token, body, 0);
+          } catch (e) {
+            previous[name] = { error: e.message, rows: [] };
+          }
+        }
+      }
+      // Backwards compatibility: if no prev requested, return flat shape.
+      // If prev requested, wrap under {current, previous}.
+      const result = wantPrev ? { current, previous } : current;
       _cache[cacheKey] = { data: result, ts: Date.now() };
       res.status(200).json(result); return;
     }

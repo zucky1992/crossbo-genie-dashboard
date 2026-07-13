@@ -909,12 +909,12 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
       <div id="aa-health-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
     </div>
 
-    <!-- Section 6: Engineering gaps (collapsed) -->
+    <!-- Section 6: Data quality & gaps (collapsed) -->
     <div class="card last">
       <div class="fu-gap-toggle" id="aa-gap-toggle" onclick="aaToggleGap()">
         <div>
-          <div class="card-title">Instrumentation gaps</div>
-          <div class="card-sub" style="margin-top:3px">For engineering · click to expand</div>
+          <div class="card-title">Data quality &amp; gaps</div>
+          <div class="card-sub" style="margin-top:3px">Instrumentation issues · engineering asks · click to expand</div>
         </div>
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
       </div>
@@ -922,10 +922,15 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
         <div style="margin-top:14px"><div class="tbl-wrap"><table class="tbl">
           <thead><tr><th>Missing / broken</th><th>Dept</th><th>Impact</th><th>Priority</th></tr></thead>
           <tbody>
+            <tr><td>source_module on booking events</td><td>All</td><td>Can't split funnel by dept — ~50% shows (not set)</td><td><span class="pill pr">Critical</span></td></tr>
+            <tr><td>source_screen on booking events</td><td>All</td><td>Can't see where guests enter each dept from (widget, nav, deep link)</td><td><span class="pill pr">Critical</span></td></tr>
+            <tr><td>service field on booking_complete / booking_abandoned</td><td>Store</td><td>Can't see which items are ordered or abandoned in cart</td><td><span class="pill pr">High</span></td></tr>
+            <tr><td>property user-property populated on all sessions</td><td>All</td><td>~22% of sessions have no hotel attribution</td><td><span class="pill pr">High</span></td></tr>
+            <tr><td>Cross-project data bleed ("Hotel", "ENVI PAJE Zanzibar")</td><td>All</td><td>Unknown properties polluting GA4 — audit needed</td><td><span class="pill pr">High</span></td></tr>
             <tr><td>Reels screen — zero tracking</td><td>Global</td><td>No play/skip/complete data</td><td><span class="pill pr">High</span></td></tr>
             <tr><td>Active Requests screen — zero tracking</td><td>Global</td><td>1,000+ views, zero interactions tracked</td><td><span class="pill pr">High</span></td></tr>
             <tr><td>Order History screen — zero tracking</td><td>Global</td><td>Re-order funnel invisible</td><td><span class="pill pr">High</span></td></tr>
-            <tr><td>source_module on booking events</td><td>All</td><td>Can't split funnel by dept — all shows (not set)</td><td><span class="pill pr">High</span></td></tr>
+            <tr><td>screen_view events not firing</td><td>All</td><td>screens_per_session = 0 — no navigation visibility</td><td><span class="pill pa">Medium</span></td></tr>
             <tr><td>Activity mood picker swipes</td><td>Activity</td><td>"Find my Perfect Experience" — no swipe events</td><td><span class="pill pa">Medium</span></td></tr>
             <tr><td>SPA instrumentation before Oct 15</td><td>SPA</td><td>Reopen without analytics = month of blind data</td><td><span class="pill pa">Medium</span></td></tr>
             <tr><td>cart_view with item_count + cart_total</td><td>IRD</td><td>Can't see cart abandonment value</td><td><span class="pill pa">Medium</span></td></tr>
@@ -4607,6 +4612,96 @@ function aaRows(data) {
   });
 }
 
+/* ══════════════════════════════════════════════════════════
+   PHASE 1 HELPERS (v48)
+   - Previous-period range computation for delta arrows
+   - Sparkline SVG rendering (no external chart lib)
+   - Delta pill rendering with color coding
+══════════════════════════════════════════════════════════ */
+
+// Given a start like '30daysAgo', compute the equivalent previous range.
+// '30daysAgo → today' becomes '60daysAgo → 30daysAgo'.
+// Used by aaLoad to fetch previous-period reports for delta comparison.
+function aaComputePrevRange(startDate, endDate) {
+  // GA4 supports relative dates like 'NdaysAgo' and 'today'
+  const m = /^(\d+)daysAgo$/.exec(startDate);
+  if (!m || endDate !== 'today') return null; // only support NdaysAgo → today for now
+  const n = parseInt(m[1]);
+  return { start: `${n*2}daysAgo`, end: `${n}daysAgo` };
+}
+
+// Compute % delta with sign. Returns { pct, dir } where dir is 'up' | 'down' | 'flat'.
+// Handles divide-by-zero (previous was 0 → dir='new' if current > 0, else 'flat').
+function aaDelta(current, previous) {
+  const c = Number(current) || 0;
+  const p = Number(previous) || 0;
+  if (p === 0) return { pct: c > 0 ? 100 : 0, dir: c > 0 ? 'new' : 'flat', raw: c - p };
+  const pct = Math.round((c - p) / p * 100);
+  return { pct: Math.abs(pct), dir: pct > 2 ? 'up' : pct < -2 ? 'down' : 'flat', raw: c - p };
+}
+
+// Render a small delta pill: "▲ 12%" green / "▼ 4%" red / "— flat" grey.
+// isGoodWhenDown flips the color semantics for metrics like drop rate or crashes
+// where a decrease is good news.
+function aaDeltaPill(current, previous, opts = {}) {
+  const { isGoodWhenDown = false, label = 'vs prev period' } = opts;
+  const d = aaDelta(current, previous);
+  if (d.dir === 'flat') return `<span style="font-size:10px;color:var(--text3)">— flat ${label}</span>`;
+  if (d.dir === 'new') return `<span style="font-size:10px;color:var(--teal)">new ${label}</span>`;
+  const isPositiveChange = d.dir === 'up';
+  const isGoodChange = isGoodWhenDown ? !isPositiveChange : isPositiveChange;
+  const color = isGoodChange ? 'var(--teal)' : 'var(--red)';
+  const arrow = isPositiveChange ? '▲' : '▼';
+  return `<span style="font-size:10px;color:${color};font-weight:500">${arrow} ${d.pct}% ${label}</span>`;
+}
+
+// Render a compact SVG sparkline from a numeric series. Fixed 120x24 size for
+// KPI tiles. Draws a smooth line, no axes, no labels — just the shape.
+// Handles all-zero series and single-point series gracefully.
+function aaSparkline(values, opts = {}) {
+  const { color = 'var(--teal)', w = 120, h = 24, fill = false } = opts;
+  if (!values || values.length < 2) {
+    return `<svg width="${w}" height="${h}" style="display:block"></svg>`;
+  }
+  const max = Math.max(...values, 1);
+  const min = Math.min(...values, 0);
+  const range = max - min || 1;
+  const step = w / (values.length - 1);
+  const pts = values.map((v, i) => {
+    const x = i * step;
+    const y = h - 2 - ((v - min) / range) * (h - 4);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const fillPath = fill ? `<polyline points="0,${h} ${pts} ${w},${h}" fill="${color}" fill-opacity="0.1" stroke="none"/>` : '';
+  return `<svg width="${w}" height="${h}" style="display:block;overflow:visible">
+    ${fillPath}
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
+}
+
+// Extract a daily series from a GA4 daily_sparkline response.
+// Fills missing days with 0 so line has consistent x-spacing.
+function aaExtractDailySeries(data, metricName) {
+  const rows = aaRows(data);
+  if (rows.length === 0) return [];
+  // Rows have {date: 'YYYYMMDD', [metricName]: number}
+  const sorted = rows.slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  return sorted.map(r => Number(r[metricName]) || 0);
+}
+
+// Extract a daily series for a specific eventName from daily_events_sparkline.
+function aaExtractEventSeries(data, eventName) {
+  const rows = aaRows(data).filter(r => r.eventName === eventName);
+  if (rows.length === 0) return [];
+  const sorted = rows.slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  return sorted.map(r => Number(r.eventCount) || 0);
+}
+
+// State: track previous-period responses. Populated by aaLoad when a valid
+// previous range exists; consumed by render functions to show delta pills.
+let aaPrevData = null;
+let aaSparklineData = null;
+
 async function aaLoad(force = false) {
   if (!force && aaLoaded) return;
   aaLoaded = true;
@@ -4626,17 +4721,33 @@ async function aaLoad(force = false) {
   });
 
   try {
-    // Single multi-call: all reports fetched SEQUENTIALLY server-side in one
-    // request. Bounds GA4 concurrency to 1 per call, avoiding 429 rate limits.
-    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,abandon_detail,top_services,recommendations,notifications,app_health,portfolio_metrics,sessions_by_hotel,dept_entry_source';
+    // v48: hero KPIs need previous-period comparison AND daily sparklines.
+    // We do this in a single multi call by:
+    //   - adding daily_sparkline + daily_events_sparkline to the report list
+    //     (both queried against CURRENT window since sparkline IS the trend)
+    //   - passing prevStartDate/prevEndDate so backend fetches everything
+    //     twice — once for current, once for previous — and returns
+    //     {current: {...}, previous: {...}}.
+    // The prev range is 'NdaysAgo → today' shifted back by N days
+    // (e.g. 30d current = day-60 to day-30 previous).
+    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,abandon_detail,top_services,recommendations,notifications,app_health,portfolio_metrics,sessions_by_hotel,dept_entry_source,daily_sparkline,daily_events_sparkline';
+    const prevRange = aaComputePrevRange(aaStartDate, aaEndDate);
     let multiUrl = `${AA_FN}?multi=${reportList}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
+    if (prevRange) {
+      multiUrl += `&prevStartDate=${prevRange.start}&prevEndDate=${prevRange.end}`;
+    }
     if (aaHotelId) multiUrl += `&hotelId=${aaHotelId}`;
     if (aaExcludeTest) multiUrl += `&excludeTest=true`;
 
     const multiRes = await fetch(multiUrl);
     if (!multiRes.ok) throw new Error(`Load failed: ${multiRes.status}`);
-    const md = await multiRes.json();
-    if (md.error) throw new Error(md.error);
+    const raw = await multiRes.json();
+    if (raw.error) throw new Error(raw.error);
+
+    // Backend returns {current, previous} when prevRange is set, else flat.
+    const md = prevRange && raw.current ? raw.current : raw;
+    const mdPrev = prevRange && raw.previous ? raw.previous : null;
+    aaPrevData = mdPrev;
 
     const funnel = md.booking_funnel || { rows: [] };
     const screens = md.screen_views || { rows: [] };
@@ -4650,6 +4761,9 @@ async function aaLoad(force = false) {
     const portfolioMetrics = md.portfolio_metrics || { rows: [] };
     const sessionsByHotel = md.sessions_by_hotel || { rows: [] };
     const deptEntrySource = md.dept_entry_source || { rows: [] };
+    const dailySparkline = md.daily_sparkline || { rows: [] };
+    const dailyEventsSparkline = md.daily_events_sparkline || { rows: [] };
+    aaSparklineData = { daily: dailySparkline, events: dailyEventsSparkline };
 
     // Populate client cache so dept-card lazy loads (e.g. Store funnel reusing
     // screen_views) don't re-hit the API.
@@ -4707,13 +4821,73 @@ function aaRenderKPIs(funnelData, screensData, healthData) {
   const dropRate = starts > 0 ? Math.round(abandoned / starts * 100) : 0;
   const hRows = healthData ? aaRows(healthData) : [];
   const crashes = hRows.find(r => r.eventName === 'app_exception')?.eventCount || 0;
+
+  // v48: previous-period values for delta pills. If aaPrevData is null
+  // (period doesn't support prev, e.g. custom date), we skip deltas cleanly.
+  let prevStarts = 0, prevCompletes = 0, prevAbandoned = 0, prevCrashes = 0;
+  let prevConvRate = 0, prevDropRate = 0;
+  if (aaPrevData) {
+    const pFunnel = aaRows(aaPrevData.booking_funnel || { rows: [] });
+    prevStarts = pFunnel.filter(r => r.eventName === 'booking_start').reduce((a, r) => a + r.eventCount, 0);
+    prevCompletes = pFunnel.filter(r => r.eventName === 'booking_complete').reduce((a, r) => a + r.eventCount, 0);
+    prevAbandoned = pFunnel.filter(r => r.eventName === 'booking_abandoned').reduce((a, r) => a + r.eventCount, 0);
+    prevConvRate = prevStarts > 0 ? Math.round(prevCompletes / prevStarts * 100) : 0;
+    prevDropRate = prevStarts > 0 ? Math.round(prevAbandoned / prevStarts * 100) : 0;
+    const pHealth = aaRows(aaPrevData.app_health || { rows: [] });
+    prevCrashes = pHealth.find(r => r.eventName === 'app_exception')?.eventCount || 0;
+  }
+
+  // Sparklines from daily_events_sparkline
+  const startsSpark = aaSparklineData ? aaExtractEventSeries(aaSparklineData.events, 'booking_start') : [];
+  const completesSpark = aaSparklineData ? aaExtractEventSeries(aaSparklineData.events, 'booking_complete') : [];
+  const abandonedSpark = aaSparklineData ? aaExtractEventSeries(aaSparklineData.events, 'booking_abandoned') : [];
+  const crashesSpark = aaSparklineData ? aaExtractEventSeries(aaSparklineData.events, 'app_exception') : [];
+
   const convColor = convRate >= 25 ? 'var(--teal)' : convRate >= 15 ? 'var(--amber)' : 'var(--red)';
   const crashColor = crashes > 100 ? 'var(--red)' : crashes > 30 ? 'var(--amber)' : 'var(--teal)';
+
   document.getElementById('aa-kpis').innerHTML = `
-    <div class="kpi"><div class="kpi-label">${tt('booking_starts', 'Booking starts')}</div><div class="kpi-val">${starts.toLocaleString()}</div><div class="kpi-delta">guests who began booking</div></div>
-    <div class="kpi"><div class="kpi-label">${tt('booking_completes', 'Completed')}</div><div class="kpi-val">${completes.toLocaleString()}</div><div class="kpi-delta" style="color:${convColor}">${tt('conversion_rate', convRate + '% conversion rate')}</div></div>
-    <div class="kpi"><div class="kpi-label">${tt('booking_abandoned', 'Abandoned')}</div><div class="kpi-val">${abandoned.toLocaleString()}</div><div class="kpi-delta dn">${tt('drop_rate', dropRate + '% left without completing')}</div></div>
-    <div class="kpi"><div class="kpi-label">${tt('app_crashes', 'App crashes')}</div><div class="kpi-val">${crashes.toLocaleString()}</div><div class="kpi-delta" style="color:${crashColor}">app_exception events</div></div>`;
+    <div class="kpi">
+      <div class="kpi-label">${tt('booking_starts', 'Booking starts')}</div>
+      <div class="kpi-val">${starts.toLocaleString()}</div>
+      <div class="kpi-delta" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div>${aaPrevData ? aaDeltaPill(starts, prevStarts) : 'guests who began booking'}</div>
+        <div>${aaSparkline(startsSpark, { color: 'var(--teal)' })}</div>
+      </div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">${tt('booking_completes', 'Completed')}</div>
+      <div class="kpi-val">${completes.toLocaleString()}</div>
+      <div class="kpi-delta" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div>
+          <div style="color:${convColor}">${tt('conversion_rate', convRate + '% conv')}</div>
+          ${aaPrevData ? `<div style="margin-top:2px">${aaDeltaPill(completes, prevCompletes)}</div>` : ''}
+        </div>
+        <div>${aaSparkline(completesSpark, { color: 'var(--teal)' })}</div>
+      </div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">${tt('booking_abandoned', 'Abandoned')}</div>
+      <div class="kpi-val">${abandoned.toLocaleString()}</div>
+      <div class="kpi-delta dn" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div>
+          <div>${tt('drop_rate', dropRate + '% dropped')}</div>
+          ${aaPrevData ? `<div style="margin-top:2px">${aaDeltaPill(abandoned, prevAbandoned, { isGoodWhenDown: true })}</div>` : ''}
+        </div>
+        <div>${aaSparkline(abandonedSpark, { color: 'var(--red)' })}</div>
+      </div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">${tt('app_crashes', 'App crashes')}</div>
+      <div class="kpi-val">${crashes.toLocaleString()}</div>
+      <div class="kpi-delta" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div>
+          <div style="color:${crashColor}">app_exception</div>
+          ${aaPrevData ? `<div style="margin-top:2px">${aaDeltaPill(crashes, prevCrashes, { isGoodWhenDown: true })}</div>` : ''}
+        </div>
+        <div>${aaSparkline(crashesSpark, { color: 'var(--red)' })}</div>
+      </div>
+    </div>`;
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -4829,27 +5003,69 @@ function aaRenderPortfolioHealth(metricsData, sessionsData, funnelData, screensD
   // ── Assemble HTML ─────────────────────────────────────────────────
   let html = '';
 
+  // v48: compute previous-period comparisons for the 4 Portfolio KPIs.
+  // These are portfolio-wide session/user metrics, delta pills only when
+  // aaPrevData is populated (aaComputePrevRange returned non-null).
+  let prevSessions = 0, prevTotalUsers = 0, prevEngagedSessions = 0, prevStartsPortfolio = 0;
+  if (aaPrevData) {
+    const pMetrics = aaRows(aaPrevData.portfolio_metrics || { rows: [] });
+    const pm = pMetrics[0] || {};
+    prevSessions = parseInt(pm.sessions || 0);
+    prevTotalUsers = parseInt(pm.totalUsers || 0);
+    prevEngagedSessions = parseInt(pm.engagedSessions || 0);
+    const pFunnel = aaRows(aaPrevData.booking_funnel || { rows: [] });
+    prevStartsPortfolio = pFunnel.filter(r => r.eventName === 'booking_start').reduce((a, r) => a + r.eventCount, 0);
+  }
+  const prevEngagementRate = prevSessions > 0 ? Math.round(prevEngagedSessions / prevSessions * 100) : 0;
+  const prevSessionToStart = prevSessions > 0 ? (prevStartsPortfolio / prevSessions * 100).toFixed(1) : 0;
+
+  // Sparklines from daily_sparkline (sessions/users/engaged) + events data
+  const sessionsSpark = aaSparklineData ? aaExtractDailySeries(aaSparklineData.daily, 'sessions') : [];
+  const usersSpark = aaSparklineData ? aaExtractDailySeries(aaSparklineData.daily, 'totalUsers') : [];
+  const engagedSpark = aaSparklineData ? aaExtractDailySeries(aaSparklineData.daily, 'engagedSessions') : [];
+  // For session→booking we need a computed daily rate (starts/sessions)
+  const startsDaily = aaSparklineData ? aaExtractEventSeries(aaSparklineData.events, 'booking_start') : [];
+  const sessionToBookingSpark = sessionsSpark.length === startsDaily.length
+    ? sessionsSpark.map((s, i) => s > 0 ? Math.round(startsDaily[i] / s * 100) : 0)
+    : [];
+
   // KPI strip
   html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
     <div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
       <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:6px">${tt('sessions', 'Sessions')}</div>
-      <div style="font-size:24px;font-weight:600">${sessions.toLocaleString()}</div>
-      <div style="font-size:11px;color:${hasScreenViews ? 'var(--text3)' : 'var(--amber-d)'};margin-top:4px">${hasScreenViews ? tt('screens_per_session', screensPerSession + ' screens per session') : '⚠ screen_view events not instrumented'}</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:8px">
+        <div style="font-size:24px;font-weight:600;line-height:1">${sessions.toLocaleString()}</div>
+        <div>${aaSparkline(sessionsSpark, { color: 'var(--teal)' })}</div>
+      </div>
+      <div style="font-size:11px;color:${hasScreenViews ? 'var(--text3)' : 'var(--amber-d)'};margin-top:6px">${hasScreenViews ? tt('screens_per_session', screensPerSession + ' screens per session') : '⚠ screen_view events not instrumented'}</div>
+      ${aaPrevData ? `<div style="margin-top:4px">${aaDeltaPill(sessions, prevSessions)}</div>` : ''}
     </div>
     <div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
       <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:6px">${tt('unique_users', 'Unique users')}</div>
-      <div style="font-size:24px;font-weight:600">${totalUsers.toLocaleString()}</div>
-      <div style="font-size:11px;color:var(--text3);margin-top:4px">${tt('sessions_per_user', sessionsPerUser + ' sessions per user')}</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:8px">
+        <div style="font-size:24px;font-weight:600;line-height:1">${totalUsers.toLocaleString()}</div>
+        <div>${aaSparkline(usersSpark, { color: 'var(--teal)' })}</div>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px">${tt('sessions_per_user', sessionsPerUser + ' sessions per user')}</div>
+      ${aaPrevData ? `<div style="margin-top:4px">${aaDeltaPill(totalUsers, prevTotalUsers)}</div>` : ''}
     </div>
     <div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
       <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:6px">${tt('engagement_rate', 'Engagement rate')}</div>
-      <div style="font-size:24px;font-weight:600">${engagementRate}%</div>
-      <div style="font-size:11px;color:var(--text3);margin-top:4px">${tt('engaged_sessions', engagedSessions.toLocaleString() + ' engaged sessions')}</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:8px">
+        <div style="font-size:24px;font-weight:600;line-height:1">${engagementRate}%</div>
+        <div>${aaSparkline(engagedSpark, { color: 'var(--teal)' })}</div>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px">${tt('engaged_sessions', engagedSessions.toLocaleString() + ' engaged sessions')}</div>
+      ${aaPrevData ? `<div style="margin-top:4px">${aaDeltaPill(engagementRate, prevEngagementRate)}</div>` : ''}
     </div>
-    <div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm) tt-right">
+    <div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
       <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:6px">${tt('session_to_booking', 'Session → booking')}</div>
-      <div style="font-size:24px;font-weight:600">${sessionToStart}%</div>
-      <div style="font-size:11px;color:var(--text3);margin-top:4px">${starts.toLocaleString()} starts from ${sessions.toLocaleString()} sessions</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:8px">
+        <div style="font-size:24px;font-weight:600;line-height:1">${sessionToStart}%</div>
+        <div>${aaSparkline(sessionToBookingSpark, { color: 'var(--teal)' })}</div>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px">${starts.toLocaleString()} starts from ${sessions.toLocaleString()} sessions</div>
+      ${aaPrevData ? `<div style="margin-top:4px">${aaDeltaPill(parseFloat(sessionToStart), parseFloat(prevSessionToStart))}</div>` : ''}
     </div>
   </div>`;
 
@@ -4969,14 +5185,25 @@ function aaRenderFunnel(data) {
       </div>
       <div>
         <div class="sec-lbl" style="margin-bottom:10px">Booking starts by department</div>
-        ${topDepts.map(([dept, count]) => `
-          <div class="fu-bar-row">
-            <div class="fu-bar-label">${DEPT_NAMES[dept] || dept}</div>
-            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/starts*100)}%;background:var(--teal)"></div></div>
-            <div class="fu-bar-val">${count.toLocaleString()}</div>
-            <div class="fu-bar-pct">${Math.round(count/starts*100)}%</div>
-          </div>`).join('')}
-        ${deptStarts['(not set)'] ? `<div style="font-size:9px;color:var(--amber);margin-top:10px">⚠ ${Math.round((deptStarts['(not set)']/starts)*100)}% of starts have no dept — awaiting engineering fix.</div>` : ''}
+        ${topDepts.map(([dept, count]) => {
+          const isNotSet = dept === '(not set)';
+          const label = isNotSet ? 'Unattributed' : (DEPT_NAMES[dept] || dept);
+          const barColor = isNotSet ? 'var(--red)' : 'var(--teal)';
+          const textColor = isNotSet ? 'color:var(--red)' : '';
+          return `<div class="fu-bar-row">
+            <div class="fu-bar-label" style="${textColor};display:flex;align-items:center;gap:6px">
+              ${isNotSet ? `<span style="font-size:8px;background:rgba(220,38,38,0.12);color:var(--red);padding:1px 5px;border-radius:8px" title="Instrumentation gap — source_module missing">gap</span>` : ''}
+              ${label}
+            </div>
+            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/starts*100)}%;background:${barColor};opacity:${isNotSet?0.5:1}"></div></div>
+            <div class="fu-bar-val" style="${textColor}">${count.toLocaleString()}</div>
+            <div class="fu-bar-pct" style="${textColor}">${Math.round(count/starts*100)}%</div>
+          </div>`;
+        }).join('')}
+        ${deptStarts['(not set)'] ? `<div style="font-size:10px;color:var(--red);margin-top:10px;padding:8px;background:rgba(220,38,38,0.06);border-radius:4px;line-height:1.5">
+          <strong>⚠ ${Math.round((deptStarts['(not set)']/starts)*100)}% of booking starts (${deptStarts['(not set)'].toLocaleString()} events) have no department attribution.</strong><br>
+          Engineering needs to attach <code>source_module</code> to every booking_start event. Until fixed, dept-level conversion rates are undercounted.
+        </div>` : ''}
       </div>
     </div>`;
 }
@@ -4984,6 +5211,23 @@ function aaRenderFunnel(data) {
 function aaRenderDeptPills(funnelData, screensData) {
   const rows = aaRows(funnelData);
   const DEPT_MODULE = { ird:'dining', activity:'activity', spa:'spa', restaurant:'restaurant', taxi:'taxi', housekeeping:'housekeeping', store:'store', chat:null, home:'home' };
+
+  // v48: Compute portfolio-average conversion across all attributed depts.
+  // Used as the benchmark line for each dept — depts are flagged relative to
+  // the portfolio, not against an arbitrary "25%" threshold. More honest and
+  // more adaptable as the portfolio itself changes.
+  //
+  // Note: excludes (not set) source_module from the denominator. Otherwise
+  // the ~50% unattributed events skew the average downward artificially.
+  let totalStarts = 0, totalCompletes = 0;
+  rows.forEach(r => {
+    const mod = r['customEvent:source_module'];
+    if (!mod || mod === '(not set)') return;
+    if (r.eventName === 'booking_start') totalStarts += r.eventCount;
+    if (r.eventName === 'booking_complete') totalCompletes += r.eventCount;
+  });
+  const portfolioAvg = totalStarts > 0 ? Math.round(totalCompletes / totalStarts * 100) : 0;
+
   Object.keys(DEPT_CONFIG).forEach(dept => {
     const pillEl = document.getElementById(`aa-pill-${dept}`);
     if (!pillEl) return;
@@ -4993,8 +5237,13 @@ function aaRenderDeptPills(funnelData, screensData) {
     const deptCompletes = rows.filter(r => r.eventName === 'booking_complete' && r['customEvent:source_module'] === mod).reduce((a,r) => a + r.eventCount, 0);
     if (!deptStarts) { pillEl.innerHTML = '<span class="aa-health aa-health-na">Tap to load</span>'; return; }
     const conv = Math.round(deptCompletes / deptStarts * 100);
-    const cls = conv >= 25 ? 'aa-health-good' : conv >= 15 ? 'aa-health-warn' : 'aa-health-bad';
-    pillEl.innerHTML = `<span class="aa-health ${cls}">${conv}% conv</span>`;
+    // Portfolio-relative color: within 5pt of avg = neutral, above = good, below = bad.
+    // This replaces the old absolute thresholds (25% / 15% cutoffs).
+    const diff = conv - portfolioAvg;
+    const cls = diff >= 5 ? 'aa-health-good' : diff <= -5 ? 'aa-health-bad' : 'aa-health-warn';
+    const arrow = diff >= 3 ? '▲' : diff <= -3 ? '▼' : '';
+    const vsLabel = portfolioAvg > 0 ? ` <span style="font-size:9px;opacity:.7">vs ${portfolioAvg}% avg</span>` : '';
+    pillEl.innerHTML = `<span class="aa-health ${cls}">${arrow ? arrow + ' ' : ''}${conv}% conv${vsLabel}</span>`;
   });
 }
 
@@ -5401,27 +5650,43 @@ async function aaRenderDeptBody(dept, rows, cfg) {
   const maxGroupCount = sortedGroups[0]?.[1].total || 1;
   const deptId = dept; // for unique IDs
 
+  // v48: Collapse the interaction detail behind a toggle button.
+  // The 15-20 tap-event lists per dept are engineering diagnostics, not
+  // product insight — they were dominating the visual field. Hidden by
+  // default, revealed on demand. State stored in `data-open` attribute.
+  //
+  // v48: Also flag `(not set)` group rows in red-tinted style to make the
+  // instrumentation gap visible without hiding the data.
   const interactionsHTML = `
-    <div class="sec-lbl" style="margin-bottom:10px">${sortedGroups.length} interaction types · ${grandTotal.toLocaleString()} total taps · click any row to expand</div>
-    <div style="max-height:380px;overflow-y:auto;padding-right:4px">
+    <div style="margin-top:12px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
+      <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="aaToggleInteractions('${deptId}')">
+        <div class="sec-lbl" style="margin:0">${sortedGroups.length} interaction types · ${grandTotal.toLocaleString()} total taps</div>
+        <div style="display:flex;align-items:center;gap:8px;color:var(--text3);font-size:11px">
+          <span id="aa-int-toggle-label-${deptId}">Show interaction detail</span>
+          <svg id="aa-int-chev-${deptId}" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="transition:transform .15s"><path d="M4 6l4 4 4-4"/></svg>
+        </div>
+      </div>
+      <div id="aa-int-body-${deptId}" style="display:none;margin-top:12px;max-height:380px;overflow-y:auto;padding-right:4px">
       ${sortedGroups.map(([groupKey, g], idx) => {
         const pct = Math.round(g.total / grandTotal * 100);
         const hasItems = g.items.length > 0;
         const uid = `${deptId}-${idx}`;
+        const isNotSet = groupKey === '(not set)' || groupKey === '—' || (g.evtName && g.evtName === '(not set)');
         // Sort sub-items by count
         const subItems = [...g.items].sort((a, b) => b.count - a.count);
         const subMax = subItems[0]?.count || 1;
 
         return `<div>
-          <div class="fu-bar-row aa-group-row" onclick="aaToggleGroup('${uid}')" style="cursor:${hasItems?'pointer':'default'};padding:6px 0">
-            <div class="fu-bar-label" style="display:flex;align-items:center;gap:6px">
+          <div class="fu-bar-row aa-group-row" onclick="aaToggleGroup('${uid}')" style="cursor:${hasItems?'pointer':'default'};padding:6px 0${isNotSet?';background:rgba(220,38,38,0.06);border-radius:4px':''}">
+            <div class="fu-bar-label" style="display:flex;align-items:center;gap:6px${isNotSet?';color:var(--red)':''}">
               ${g.isSpecial ? `<span style="font-size:8px;background:var(--blue-l);color:var(--blue-d);padding:1px 5px;border-radius:8px;flex-shrink:0">${g.evtName}</span>` : ''}
+              ${isNotSet ? `<span style="font-size:8px;background:rgba(220,38,38,0.12);color:var(--red);padding:1px 5px;border-radius:8px;flex-shrink:0" title="Events without label — instrumentation gap">gap</span>` : ''}
               <span style="font-weight:500">${groupKey}</span>
               ${hasItems ? `<svg id="aa-chev-${uid}" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;transition:transform .15s"><path d="M4 6l4 4 4-4"/></svg>` : ''}
             </div>
-            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(g.total/maxGroupCount*100)}%;background:${g.isSpecial?'var(--blue)':'var(--teal)'}"></div></div>
-            <div class="fu-bar-val">${g.total.toLocaleString()}</div>
-            <div class="fu-bar-pct">${pct}%</div>
+            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(g.total/maxGroupCount*100)}%;background:${isNotSet?'var(--red)':g.isSpecial?'var(--blue)':'var(--teal)'};opacity:${isNotSet?0.5:1}"></div></div>
+            <div class="fu-bar-val" style="${isNotSet?'color:var(--red)':''}">${g.total.toLocaleString()}</div>
+            <div class="fu-bar-pct" style="${isNotSet?'color:var(--red)':''}">${pct}%</div>
           </div>
           ${hasItems ? `<div id="aa-sub-${uid}" style="display:none;padding:4px 0 8px 16px;border-left:2px solid var(--border);margin-left:8px;margin-bottom:4px">
             ${subItems.slice(0, 20).map(item => {
@@ -5437,6 +5702,7 @@ async function aaRenderDeptBody(dept, rows, cfg) {
           </div>` : ''}
         </div>`;
       }).join('')}
+      </div>
     </div>`;
 
   // Special notes per dept
@@ -5466,6 +5732,19 @@ function aaToggleGroup(uid) {
   const isOpen = sub.style.display !== 'none';
   sub.style.display = isOpen ? 'none' : 'block';
   if (chev) chev.style.transform = isOpen ? '' : 'rotate(180deg)';
+}
+
+// v48: Toggle a whole department's interaction detail section.
+// Collapsed by default to reduce visual noise. Users click to reveal.
+function aaToggleInteractions(deptId) {
+  const body = document.getElementById(`aa-int-body-${deptId}`);
+  const chev = document.getElementById(`aa-int-chev-${deptId}`);
+  const label = document.getElementById(`aa-int-toggle-label-${deptId}`);
+  if (!body) return;
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : 'block';
+  if (chev) chev.style.transform = isOpen ? '' : 'rotate(180deg)';
+  if (label) label.textContent = isOpen ? 'Show interaction detail' : 'Hide interaction detail';
 }
 
 function aaRenderRecs(data) {
