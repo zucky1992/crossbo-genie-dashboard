@@ -701,6 +701,19 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
 
   <div class="scroll">
 
+    <!-- v49: This Period's Signal — auto-generated bullet list of what changed -->
+    <div class="card" style="margin-bottom:16px;border-left:3px solid var(--teal)">
+      <div class="card-head">
+        <div>
+          <div class="card-title">This period's signal</div>
+          <div class="card-sub">Auto-generated · what materially changed vs the previous window</div>
+        </div>
+      </div>
+      <div id="aa-signal-body" style="padding:4px 20px 16px">
+        <div class="fu-loading"><div class="fu-spinner"></div>Analyzing changes...</div>
+      </div>
+    </div>
+
     <!-- Section 1: Booking funnel headline metrics -->
     <div style="margin-bottom:8px">
       <div style="font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--text3);font-weight:500">Booking activity</div>
@@ -729,8 +742,21 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
       <div id="aa-funnel-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
     </div>
 
+    <!-- v49: Departments Ranked — sortable side-by-side table -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-head">
+        <div>
+          <div class="card-title">Departments ranked</div>
+          <div class="card-sub">Compare all departments side-by-side · click headers to re-sort</div>
+        </div>
+      </div>
+      <div id="aa-dept-rank-body" style="padding:0 20px 20px">
+        <div class="fu-loading"><div class="fu-spinner"></div>Ranking departments...</div>
+      </div>
+    </div>
+
     <!-- Section 2: Department cards -->
-    <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px">By department</div>
+    <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px">By department · drill down</div>
 
     <!-- IRD -->
     <div class="aa-dept-card card" id="aa-dept-ird" style="margin-bottom:10px">
@@ -4832,6 +4858,9 @@ async function aaLoad(force = false) {
 
     aaRenderKPIs(funnel, screens, health);
     aaRenderPortfolioHealth(portfolioMetrics, sessionsByHotel, funnel, screens, deptEntrySource);
+    // v49: Phase 2 additions
+    aaRenderSignal(md, mdPrev);
+    aaRenderDeptRank(md, mdPrev);
     aaRenderFunnel(funnel);
     aaRenderDeptPills(funnel, screens);
     aaRenderRecs(recs);
@@ -4859,6 +4888,322 @@ async function aaLoad(force = false) {
     // v48.1: always re-enable the refresh button so users can retry.
     if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.style.opacity = ''; refreshBtn.style.cursor = ''; refreshBtn.textContent = '↻ Refresh'; }
   }
+}
+
+/* ══════════════════════════════════════════════════════════
+   PHASE 2 (v49): SIGNAL GENERATOR
+   Rule-based synthesis of what's notable in the period.
+   Compares current vs previous window (already loaded for KPIs).
+   Emits 0-5 bullets sorted by severity. No LLM, no extra query.
+══════════════════════════════════════════════════════════ */
+
+// Compute a bag of signals from current + prev data. Each signal has:
+//   { severity: 1-3, text: string, dir: 'good'|'bad'|'neutral' }
+// Severity: 3 = critical (crash spikes, huge drops), 2 = notable, 1 = mild.
+function aaComputeSignals(curr, prev) {
+  const signals = [];
+  if (!prev) return signals; // no prev-period data — nothing to compare
+
+  const rowsCurr = aaRows(curr.booking_funnel || { rows: [] });
+  const rowsPrev = aaRows(prev.booking_funnel || { rows: [] });
+  const sumEvt = (rows, evt) => rows.filter(r => r.eventName === evt).reduce((a, r) => a + r.eventCount, 0);
+
+  const cStarts = sumEvt(rowsCurr, 'booking_start');
+  const pStarts = sumEvt(rowsPrev, 'booking_start');
+  const cCompletes = sumEvt(rowsCurr, 'booking_complete');
+  const pCompletes = sumEvt(rowsPrev, 'booking_complete');
+  const cConv = cStarts > 0 ? Math.round(cCompletes / cStarts * 100) : 0;
+  const pConv = pStarts > 0 ? Math.round(pCompletes / pStarts * 100) : 0;
+
+  // Rule 1: booking-start volume shift (±20%)
+  if (pStarts > 0) {
+    const pct = Math.round((cStarts - pStarts) / pStarts * 100);
+    if (Math.abs(pct) >= 20) {
+      signals.push({
+        severity: Math.abs(pct) >= 50 ? 3 : 2,
+        dir: pct > 0 ? 'good' : 'bad',
+        text: `Booking starts ${pct > 0 ? 'up' : 'down'} ${Math.abs(pct)}% (${pStarts.toLocaleString()} → ${cStarts.toLocaleString()})`,
+      });
+    }
+  }
+
+  // Rule 2: overall conversion shift (±3pt)
+  const convDelta = cConv - pConv;
+  if (Math.abs(convDelta) >= 3) {
+    signals.push({
+      severity: Math.abs(convDelta) >= 8 ? 3 : 2,
+      dir: convDelta > 0 ? 'good' : 'bad',
+      text: `Booking conversion ${convDelta > 0 ? 'rose' : 'dropped'} ${Math.abs(convDelta)}pt (${pConv}% → ${cConv}%)`,
+    });
+  }
+
+  // Rule 3: per-dept conversion shifts. Group by source_module for both windows,
+  // then flag any dept whose conv rate moved ±5pt with at least 50 starts.
+  const DEPT_LABELS_LOCAL = { dining: 'IRD', activity: 'Activity', spa: 'SPA', restaurant: 'Restaurant', taxi: 'Taxi', housekeeping: 'Housekeeping', store: 'Store' };
+  const byDept = (rows) => {
+    const acc = {};
+    rows.forEach(r => {
+      const mod = r['customEvent:source_module'];
+      if (!mod || mod === '(not set)') return;
+      acc[mod] = acc[mod] || { starts: 0, completes: 0 };
+      if (r.eventName === 'booking_start') acc[mod].starts += r.eventCount;
+      if (r.eventName === 'booking_complete') acc[mod].completes += r.eventCount;
+    });
+    return acc;
+  };
+  const cDeptMap = byDept(rowsCurr);
+  const pDeptMap = byDept(rowsPrev);
+  Object.keys(cDeptMap).forEach(mod => {
+    const c = cDeptMap[mod];
+    const p = pDeptMap[mod] || { starts: 0, completes: 0 };
+    if (c.starts < 50 || p.starts < 50) return; // ignore low-volume noise
+    const cRate = Math.round(c.completes / c.starts * 100);
+    const pRate = Math.round(p.completes / p.starts * 100);
+    const diff = cRate - pRate;
+    if (Math.abs(diff) >= 5) {
+      const name = DEPT_LABELS_LOCAL[mod] || mod;
+      signals.push({
+        severity: Math.abs(diff) >= 10 ? 3 : 2,
+        dir: diff > 0 ? 'good' : 'bad',
+        text: `${name} conversion ${diff > 0 ? 'rose' : 'dropped'} ${Math.abs(diff)}pt (${pRate}% → ${cRate}%)`,
+      });
+    }
+  });
+
+  // Rule 4: app crash spike (±30%)
+  const cCrash = aaRows(curr.app_health || { rows: [] }).find(r => r.eventName === 'app_exception')?.eventCount || 0;
+  const pCrash = aaRows(prev.app_health || { rows: [] }).find(r => r.eventName === 'app_exception')?.eventCount || 0;
+  if (pCrash > 0) {
+    const pct = Math.round((cCrash - pCrash) / pCrash * 100);
+    if (Math.abs(pct) >= 30) {
+      signals.push({
+        severity: Math.abs(pct) >= 100 ? 3 : 2,
+        dir: pct < 0 ? 'good' : 'bad',
+        text: `App crashes ${pct > 0 ? 'up' : 'down'} ${Math.abs(pct)}% (${pCrash} → ${cCrash}) — ${pct > 0 ? 'investigate in Crashlytics' : 'stability improving'}`,
+      });
+    }
+  }
+
+  // Rule 5: session vs intent divergence — sessions down but session→booking up
+  const cMetricsRow = aaRows(curr.portfolio_metrics || { rows: [] })[0] || {};
+  const pMetricsRow = aaRows(prev.portfolio_metrics || { rows: [] })[0] || {};
+  const cSessions = parseInt(cMetricsRow.sessions || 0);
+  const pSessions = parseInt(pMetricsRow.sessions || 0);
+  const cSessToBook = cSessions > 0 ? Math.round(cStarts / cSessions * 100) : 0;
+  const pSessToBook = pSessions > 0 ? Math.round(pStarts / pSessions * 100) : 0;
+  if (pSessions > 0) {
+    const sessPct = Math.round((cSessions - pSessions) / pSessions * 100);
+    const s2bDiff = cSessToBook - pSessToBook;
+    if (sessPct <= -10 && s2bDiff >= 3) {
+      signals.push({
+        severity: 2, dir: 'neutral',
+        text: `Fewer sessions (${sessPct}%) but higher intent (session→booking ${pSessToBook}% → ${cSessToBook}%). Quality up, quantity down.`,
+      });
+    }
+    if (sessPct >= 20 && s2bDiff <= -3) {
+      signals.push({
+        severity: 2, dir: 'neutral',
+        text: `More sessions (+${sessPct}%) but lower intent (session→booking ${pSessToBook}% → ${cSessToBook}%). Traffic quality dropped.`,
+      });
+    }
+  }
+
+  // Rule 6: engagement rate shift (±5pt)
+  const cEng = cSessions > 0 ? Math.round(parseInt(cMetricsRow.engagedSessions || 0) / cSessions * 100) : 0;
+  const pEng = pSessions > 0 ? Math.round(parseInt(pMetricsRow.engagedSessions || 0) / pSessions * 100) : 0;
+  if (Math.abs(cEng - pEng) >= 5 && pSessions > 100) {
+    signals.push({
+      severity: 1,
+      dir: cEng > pEng ? 'good' : 'bad',
+      text: `Engagement rate ${cEng > pEng ? 'rose' : 'dropped'} ${Math.abs(cEng - pEng)}pt (${pEng}% → ${cEng}%)`,
+    });
+  }
+
+  // Rule 7: data-quality reminder — (not set) share of booking starts
+  const notSetStarts = rowsCurr.filter(r => r.eventName === 'booking_start' && (!r['customEvent:source_module'] || r['customEvent:source_module'] === '(not set)')).reduce((a, r) => a + r.eventCount, 0);
+  const notSetShare = cStarts > 0 ? Math.round(notSetStarts / cStarts * 100) : 0;
+  if (notSetShare >= 30) {
+    signals.push({
+      severity: 1, dir: 'bad',
+      text: `${notSetShare}% of booking starts (${notSetStarts.toLocaleString()}) still lack department attribution. Engineering fix needed for accurate dept metrics.`,
+    });
+  }
+
+  // Sort by severity descending; take top 5
+  signals.sort((a, b) => b.severity - a.severity);
+  return signals.slice(0, 5);
+}
+
+// Render the Signal card. If no signals, show a "quiet period" state.
+function aaRenderSignal(curr, prev) {
+  const el = document.getElementById('aa-signal-body');
+  if (!el) return;
+  const signals = aaComputeSignals(curr, prev);
+
+  if (!prev) {
+    el.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:4px 0">Signal generator needs a previous-period comparison. Use a preset period (7 / 30 / 90 / 180 days).</div>`;
+    return;
+  }
+
+  // v49.1: show the comparison window explicitly so leaders can't misread
+  // "everything is up 60%" without knowing WHICH period we're comparing against.
+  const currentRange = (function() {
+    const s = aaResolveRelativeDate(aaStartDate);
+    const e = aaResolveRelativeDate(aaEndDate);
+    return (s && e) ? `${aaFmtShort(s)} – ${aaFmtShort(e)}` : aaStartDate + ' → ' + aaEndDate;
+  })();
+  const contextLine = `<div style="font-size:10px;color:var(--text3);padding:4px 0 10px;border-bottom:1px solid var(--border);margin-bottom:6px">Comparing <strong>${currentRange}</strong> vs <strong>${aaPrevLabel}</strong>. Signals below reflect changes between these two windows.</div>`;
+
+  if (signals.length === 0) {
+    el.innerHTML = contextLine + `<div style="font-size:11px;color:var(--text3);padding:4px 0">Quiet period. No metrics moved beyond noise thresholds. That's usually good.</div>`;
+    return;
+  }
+
+  const dotColor = (dir, sev) => {
+    if (dir === 'good') return 'var(--teal)';
+    if (dir === 'bad') return sev === 3 ? 'var(--red)' : 'var(--amber)';
+    return 'var(--text3)';
+  };
+  const sevLabel = (sev) => sev === 3 ? 'critical' : sev === 2 ? 'notable' : 'mild';
+
+  el.innerHTML = contextLine + signals.map(s => `
+    <div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="width:8px;height:8px;border-radius:50%;background:${dotColor(s.dir, s.severity)};flex-shrink:0;margin-top:5px"></div>
+      <div style="flex:1">
+        <div style="font-size:12px;color:var(--text1);line-height:1.5">${s.text}</div>
+        <div style="font-size:9px;letter-spacing:0.8px;text-transform:uppercase;color:var(--text3);margin-top:2px">${sevLabel(s.severity)}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+/* ══════════════════════════════════════════════════════════
+   PHASE 2 (v49): DEPARTMENTS RANKED TABLE
+   Single table showing all depts side-by-side. Sortable by any column.
+   Default sort: conversion worst-first (most-broken view).
+   Uses existing funnel data + prev-period data, no new queries.
+══════════════════════════════════════════════════════════ */
+
+let aaDeptRankSort = { col: 'conv', dir: 'asc' }; // default: conversion ascending (worst first)
+
+function aaComputeDeptRankRows(curr, prev) {
+  const DEPT_LABELS_LOCAL = { dining: 'IRD', activity: 'Activity', spa: 'SPA', restaurant: 'Restaurant', taxi: 'Taxi', housekeeping: 'Housekeeping', store: 'Store', home: 'Home' };
+  const rowsCurr = aaRows(curr.booking_funnel || { rows: [] });
+  const rowsPrev = prev ? aaRows(prev.booking_funnel || { rows: [] }) : [];
+  const byDept = (rows) => {
+    const acc = {};
+    rows.forEach(r => {
+      const mod = r['customEvent:source_module'];
+      if (!mod || mod === '(not set)') return;
+      acc[mod] = acc[mod] || { starts: 0, completes: 0, abandoned: 0 };
+      if (r.eventName === 'booking_start') acc[mod].starts += r.eventCount;
+      if (r.eventName === 'booking_complete') acc[mod].completes += r.eventCount;
+      if (r.eventName === 'booking_abandoned') acc[mod].abandoned += r.eventCount;
+    });
+    return acc;
+  };
+  const c = byDept(rowsCurr);
+  const p = byDept(rowsPrev);
+  return Object.keys(c).map(mod => {
+    const cur = c[mod];
+    const prv = p[mod] || { starts: 0, completes: 0, abandoned: 0 };
+    const conv = cur.starts > 0 ? Math.round(cur.completes / cur.starts * 100) : 0;
+    const prevConv = prv.starts > 0 ? Math.round(prv.completes / prv.starts * 100) : 0;
+    const dropRate = cur.starts > 0 ? Math.round(cur.abandoned / cur.starts * 100) : 0;
+    return {
+      mod, name: DEPT_LABELS_LOCAL[mod] || mod,
+      starts: cur.starts, completes: cur.completes, abandoned: cur.abandoned,
+      conv, prevConv, dropRate,
+      lostBookings: cur.abandoned, // absolute lost — matches "money on table" framing
+      startsDelta: prv.starts > 0 ? Math.round((cur.starts - prv.starts) / prv.starts * 100) : null,
+      convDelta: prv.starts >= 50 ? conv - prevConv : null,
+    };
+  });
+}
+
+function aaSortDeptRankRows(rows) {
+  const { col, dir } = aaDeptRankSort;
+  const mult = dir === 'asc' ? 1 : -1;
+  return rows.slice().sort((a, b) => {
+    const av = a[col] ?? 0, bv = b[col] ?? 0;
+    if (av < bv) return -1 * mult;
+    if (av > bv) return 1 * mult;
+    return 0;
+  });
+}
+
+function aaSetDeptRankSort(col) {
+  // Numeric columns default to descending on first click (biggest first),
+  // except conv which defaults ascending (worst first — the leadership view).
+  if (aaDeptRankSort.col === col) {
+    aaDeptRankSort.dir = aaDeptRankSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    aaDeptRankSort.col = col;
+    aaDeptRankSort.dir = col === 'conv' ? 'asc' : 'desc';
+  }
+  const curr = aaCache[`booking_funnel:${aaStartDate}:${aaEndDate}:${aaHotelId}:${aaExcludeTest}`];
+  aaRenderDeptRank({ booking_funnel: curr }, aaPrevData);
+}
+
+function aaRenderDeptRank(curr, prev) {
+  const el = document.getElementById('aa-dept-rank-body');
+  if (!el) return;
+  const rows = aaSortDeptRankRows(aaComputeDeptRankRows(curr, prev));
+  if (rows.length === 0) {
+    el.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:12px 0">No department data yet. Waiting on <code>source_module</code> instrumentation.</div>`;
+    return;
+  }
+
+  const sortIndicator = (col) => {
+    if (aaDeptRankSort.col !== col) return '<span style="opacity:.3">⇅</span>';
+    return aaDeptRankSort.dir === 'asc' ? '▲' : '▼';
+  };
+  const th = (col, label, align = 'right') => `<th style="text-align:${align};cursor:pointer;user-select:none;padding:8px 10px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)" onclick="aaSetDeptRankSort('${col}')">${label} ${sortIndicator(col)}</th>`;
+
+  const portfolioAvgConv = rows.reduce((a, r) => a + r.completes, 0) / Math.max(rows.reduce((a, r) => a + r.starts, 0), 1) * 100;
+
+  const rowHTML = rows.map(r => {
+    const convVsAvg = r.conv - Math.round(portfolioAvgConv);
+    const convColor = r.conv >= portfolioAvgConv + 3 ? 'var(--teal)' : r.conv <= portfolioAvgConv - 3 ? 'var(--red)' : 'var(--text1)';
+    const startsDeltaHTML = r.startsDelta === null ? '<span style="color:var(--text3)">—</span>'
+      : r.startsDelta > 0 ? `<span style="color:var(--teal)">▲ ${r.startsDelta}%</span>`
+      : r.startsDelta < 0 ? `<span style="color:var(--red)">▼ ${Math.abs(r.startsDelta)}%</span>`
+      : `<span style="color:var(--text3)">—</span>`;
+    const convDeltaHTML = r.convDelta === null ? '<span style="color:var(--text3)">—</span>'
+      : r.convDelta > 0 ? `<span style="color:var(--teal)">▲ ${r.convDelta}pt</span>`
+      : r.convDelta < 0 ? `<span style="color:var(--red)">▼ ${Math.abs(r.convDelta)}pt</span>`
+      : `<span style="color:var(--text3)">—</span>`;
+
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:10px;font-weight:500">${r.name}</td>
+      <td style="padding:10px;text-align:right">${r.starts.toLocaleString()}</td>
+      <td style="padding:10px;text-align:right;font-size:11px">${startsDeltaHTML}</td>
+      <td style="padding:10px;text-align:right">${r.completes.toLocaleString()}</td>
+      <td style="padding:10px;text-align:right;font-weight:600;color:${convColor}">${r.conv}%</td>
+      <td style="padding:10px;text-align:right;font-size:11px">${convDeltaHTML}</td>
+      <td style="padding:10px;text-align:right;color:var(--red)">${r.abandoned.toLocaleString()}</td>
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">
+      Click column headers to re-sort. Portfolio-avg conversion: <strong>${Math.round(portfolioAvgConv)}%</strong>. Depts below average shown in red.
+    </div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr>
+          ${th('name', 'Dept', 'left')}
+          ${th('starts', 'Starts')}
+          ${th('startsDelta', 'Δ Starts')}
+          ${th('completes', 'Completes')}
+          ${th('conv', 'Conv rate')}
+          ${th('convDelta', 'Δ Conv')}
+          ${th('lostBookings', 'Lost')}
+        </tr></thead>
+        <tbody>${rowHTML}</tbody>
+      </table>
+    </div>
+  `;
 }
 
 function aaRenderKPIs(funnelData, screensData, healthData) {
