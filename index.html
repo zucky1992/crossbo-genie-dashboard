@@ -667,7 +667,7 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
     </div>
     <div class="tb-right">
       <span class="fu-status fu-warn" id="aa-status">⟳ Not loaded</span>
-      <button class="btn" onclick="aaLoad(true)">↻ Refresh</button>
+      <button class="btn" id="aa-refresh-btn" onclick="aaLoad(true)">↻ Refresh</button>
     </div>
   </div>
 
@@ -701,15 +701,19 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
 
   <div class="scroll">
 
-    <!-- Section 1: Leadership KPIs -->
-    <div class="kpi-row kpi-r4" id="aa-kpis" style="margin-bottom:16px"></div>
+    <!-- Section 1: Booking funnel headline metrics -->
+    <div style="margin-bottom:8px">
+      <div style="font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--text3);font-weight:500">Booking activity</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px">Guests entering the booking flow · outcomes · app health</div>
+    </div>
+    <div class="kpi-row kpi-r4" id="aa-kpis" style="margin-bottom:20px"></div>
 
     <!-- Portfolio Health section (v47) — sessions, users, per-hotel, entry sources -->
     <div class="card" style="margin-bottom:16px" id="aa-portfolio-health">
       <div class="card-head">
         <div>
           <div class="card-title">Portfolio Health</div>
-          <div class="card-sub">Where guests come from · how they enter · where they go</div>
+          <div class="card-sub">Sessions · users · engagement · session-to-booking conversion</div>
         </div>
       </div>
       <div id="aa-portfolio-body" style="padding:0 20px 20px">
@@ -4643,8 +4647,10 @@ function aaDelta(current, previous) {
 // Render a small delta pill: "▲ 12%" green / "▼ 4%" red / "— flat" grey.
 // isGoodWhenDown flips the color semantics for metrics like drop rate or crashes
 // where a decrease is good news.
+// v48.1: default label pulls from aaPrevLabel (e.g. "vs Apr 14 – Jul 13") so
+// deltas are self-explanatory instead of the vague "vs prev period".
 function aaDeltaPill(current, previous, opts = {}) {
-  const { isGoodWhenDown = false, label = 'vs prev period' } = opts;
+  const { isGoodWhenDown = false, label = 'vs ' + aaPrevLabel } = opts;
   const d = aaDelta(current, previous);
   if (d.dir === 'flat') return `<span style="font-size:10px;color:var(--text3)">— flat ${label}</span>`;
   if (d.dir === 'new') return `<span style="font-size:10px;color:var(--teal)">new ${label}</span>`;
@@ -4701,6 +4707,34 @@ function aaExtractEventSeries(data, eventName) {
 // previous range exists; consumed by render functions to show delta pills.
 let aaPrevData = null;
 let aaSparklineData = null;
+// v48.1: Human-readable label for the previous window (e.g. "Apr 14 – Jul 13").
+// Set by aaLoad when prev range is computed; consumed by aaDeltaPill so labels
+// read as "▼ 35% vs Apr 14 – Jul 13" instead of the ambiguous "vs prev period".
+let aaPrevLabel = 'prev period';
+
+// Format a GA4 relative date ('NdaysAgo' or 'today') as a JS Date.
+function aaResolveRelativeDate(rel) {
+  if (rel === 'today') return new Date();
+  const m = /^(\d+)daysAgo$/.exec(rel);
+  if (!m) return null;
+  const d = new Date();
+  d.setDate(d.getDate() - parseInt(m[1]));
+  return d;
+}
+
+// Format a JS date as "Apr 14"
+function aaFmtShort(d) {
+  if (!d) return '';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// Build the human label for the previous window, e.g. "Apr 14 – Jul 13"
+function aaBuildPrevLabel(prevStart, prevEnd) {
+  const s = aaResolveRelativeDate(prevStart);
+  const e = aaResolveRelativeDate(prevEnd);
+  if (!s || !e) return 'prev period';
+  return `${aaFmtShort(s)} – ${aaFmtShort(e)}`;
+}
 
 async function aaLoad(force = false) {
   if (!force && aaLoaded) return;
@@ -4708,6 +4742,9 @@ async function aaLoad(force = false) {
 
   const statusEl = document.getElementById('aa-status');
   if (statusEl) { statusEl.className = 'fu-status fu-warn'; statusEl.textContent = '⟳ Loading...'; }
+  // v48.1: disable Refresh button to prevent double-clicks stacking requests.
+  const refreshBtn = document.getElementById('aa-refresh-btn');
+  if (refreshBtn) { refreshBtn.disabled = true; refreshBtn.style.opacity = '0.5'; refreshBtn.style.cursor = 'not-allowed'; refreshBtn.textContent = '↻ Loading...'; }
   document.getElementById('aa-kpis').innerHTML = '<div class="fu-loading"><div class="fu-spinner"></div>Loading KPIs...</div>';
   document.getElementById('aa-funnel-body').innerHTML = '<div class="fu-loading"><div class="fu-spinner"></div>Loading...</div>';
 
@@ -4735,6 +4772,9 @@ async function aaLoad(force = false) {
     let multiUrl = `${AA_FN}?multi=${reportList}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
     if (prevRange) {
       multiUrl += `&prevStartDate=${prevRange.start}&prevEndDate=${prevRange.end}`;
+      aaPrevLabel = aaBuildPrevLabel(prevRange.start, prevRange.end);
+    } else {
+      aaPrevLabel = 'prev period';
     }
     if (aaHotelId) multiUrl += `&hotelId=${aaHotelId}`;
     if (aaExcludeTest) multiUrl += `&excludeTest=true`;
@@ -4802,13 +4842,22 @@ async function aaLoad(force = false) {
     const updEl = document.getElementById('aa-updated');
     if (updEl) updEl.textContent = `Updated ${now} · GA4 data reflects last 24–48h`;
     const subEl = document.getElementById('aa-sub');
-    if (subEl) subEl.textContent = `Live from GA4 · orascom-ohm1 · ${aaStartDate} → ${aaEndDate}${aaHotelId ? ' · ' + (document.getElementById('aa-hotel-filter')?.selectedOptions[0]?.text || '') : ''}`;
+    // v48.1: Show current window as human dates ("Apr 14 – Jul 13") rather
+    // than the developer-facing "90daysAgo → today". Uses the same date
+    // resolution helpers we built for delta labels.
+    const startD = aaResolveRelativeDate(aaStartDate);
+    const endD = aaResolveRelativeDate(aaEndDate);
+    const dateRange = (startD && endD) ? `${aaFmtShort(startD)} – ${aaFmtShort(endD)}, ${endD.getFullYear()}` : `${aaStartDate} → ${aaEndDate}`;
+    if (subEl) subEl.textContent = `Live from GA4 · orascom-ohm1 · ${dateRange}${aaHotelId ? ' · ' + (document.getElementById('aa-hotel-filter')?.selectedOptions[0]?.text || '') : ''}`;
     if (statusEl) { statusEl.className = 'fu-status fu-ok'; statusEl.textContent = '● GA4 Data'; }
 
   } catch(e) {
     console.error('AA load error:', e);
     if (statusEl) { statusEl.className = 'fu-status fu-err'; statusEl.textContent = '⚠ Error'; }
     document.getElementById('aa-kpis').innerHTML = `<div style="font-size:11px;color:var(--red);padding:8px">⚠ ${e.message}</div>`;
+  } finally {
+    // v48.1: always re-enable the refresh button so users can retry.
+    if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.style.opacity = ''; refreshBtn.style.cursor = ''; refreshBtn.textContent = '↻ Refresh'; }
   }
 }
 
@@ -5058,10 +5107,11 @@ function aaRenderPortfolioHealth(metricsData, sessionsData, funnelData, screensD
       <div style="font-size:11px;color:var(--text3);margin-top:6px">${tt('engaged_sessions', engagedSessions.toLocaleString() + ' engaged sessions')}</div>
       ${aaPrevData ? `<div style="margin-top:4px">${aaDeltaPill(engagementRate, prevEngagementRate)}</div>` : ''}
     </div>
-    <div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
+    <div style="padding:14px;background:var(--teal-l,#e8f5f0);border:1px solid var(--teal);border-radius:var(--radius-sm);position:relative">
+      <div style="position:absolute;top:8px;right:10px;font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--teal);font-weight:600">Key ratio</div>
       <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:6px">${tt('session_to_booking', 'Session → booking')}</div>
       <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:8px">
-        <div style="font-size:24px;font-weight:600;line-height:1">${sessionToStart}%</div>
+        <div style="font-size:24px;font-weight:600;line-height:1;color:var(--teal-d,#0f6f4d)">${sessionToStart}%</div>
         <div>${aaSparkline(sessionToBookingSpark, { color: 'var(--teal)' })}</div>
       </div>
       <div style="font-size:11px;color:var(--text3);margin-top:6px">${starts.toLocaleString()} starts from ${sessions.toLocaleString()} sessions</div>
@@ -5093,16 +5143,28 @@ function aaRenderPortfolioHealth(metricsData, sessionsData, funnelData, screensD
   // Sessions by hotel bar chart — portfolio-wide only.
   // When a specific hotel is selected, this chart isn't meaningful (hotel
   // filter doesn't apply cleanly to session-scoped metrics), so we hide it.
+  // v48.1: Split hotels by activity threshold. Hotels with < 100 sessions in
+  // the window (Mosaique at "1 · 1 users", Ali Pasha near-zero, etc.) get
+  // collapsed into a compact "Low activity" note so they don't visually equal
+  // Casa Cook with 7,000+ sessions on the same bar chart.
+  const LOW_ACTIVITY_THRESHOLD = 100;
+  const mainHotels = hotelSessions.filter(h => h.sessions >= LOW_ACTIVITY_THRESHOLD);
+  const lowHotels = hotelSessions.filter(h => h.sessions < LOW_ACTIVITY_THRESHOLD);
+  const mainMax = mainHotels[0]?.sessions || 1;
   if (showSessionsByHotel) {
-    if (hotelSessions.length > 0) {
+    if (mainHotels.length > 0) {
       html += `<div style="margin-bottom:24px">
         <div class="sec-lbl" style="margin-bottom:10px">${tt('sessions_by_hotel', 'Sessions by hotel')}</div>
-        ${hotelSessions.map(h => `
+        ${mainHotels.map(h => `
           <div class="fu-bar-row">
             <div class="fu-bar-label" style="font-size:11px;min-width:140px">${h.hotel}</div>
-            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(h.sessions/maxHotelSessions*100)}%;background:var(--teal)"></div></div>
+            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(h.sessions/mainMax*100)}%;background:var(--teal)"></div></div>
             <div class="fu-bar-val" style="min-width:120px;text-align:right">${h.sessions.toLocaleString()} · ${h.users.toLocaleString()} users</div>
           </div>`).join('')}
+        ${lowHotels.length > 0 ? `<div style="margin-top:8px;font-size:10px;color:var(--text3);padding:6px 8px;background:var(--surface);border-radius:4px">
+          <strong>Low activity (< ${LOW_ACTIVITY_THRESHOLD} sessions):</strong>
+          ${lowHotels.map(h => `${h.hotel} <span style="color:var(--text3)">(${h.sessions})</span>`).join(' · ')}
+        </div>` : ''}
         ${notSetSessions > 0 ? `<div style="margin-top:8px;font-size:10px;color:var(--text3)">Plus ${notSetSessions.toLocaleString()} sessions with no property attributed. Engineering must populate the <code>property</code> user-property on every session for full coverage.</div>` : ''}
         ${junkSessions > 0 ? `<div style="margin-top:8px;background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:8px 10px;font-size:10px;color:var(--amber-d)">⚠ <strong>${junkSessions.toLocaleString()} sessions</strong> attributed to unrecognized properties: ${junkValues.slice(0, 5).map(v => `<code>${v}</code>`).join(', ')}${junkValues.length > 5 ? ` +${junkValues.length - 5} more` : ''}. Either test data, cross-project bleed, or misconfigured <code>property</code> values. Engineering ticket.</div>` : ''}
       </div>`;
