@@ -5275,17 +5275,23 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
   const el = document.getElementById('aa-hotel-compare-body');
   if (!el) return;
 
-  // Only show when viewing All Hotels (not filtered to one)
   if (aaHotelId) {
     el.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:12px 0">Hotel comparison shows when viewing <strong>All Hotels</strong>. Currently filtered to a single hotel.</div>`;
     return;
   }
 
+  const DEPT_LABELS = {
+    dining: 'IRD', activity: 'Activity', spa: 'SPA', restaurant: 'Restaurant',
+    taxi: 'Taxi', housekeeping: 'Housekeeping', store: 'Store', home: 'Home',
+    promotions: 'Promotions', bms_spa: 'BMS SPA', bms_dining: 'BMS Dining',
+    bms_activity: 'BMS Activity', bms_restaurant: 'BMS Restaurant',
+  };
+
   const fRows = aaRows(funnelByHotelData);
   const sRows = aaRows(sessionsByHotelData);
 
-  // Build per-hotel metrics from booking funnel
   const hotels = {};
+  const hotelDepts = {};
   fRows.forEach(r => {
     const raw = r['customUser:property'];
     const name = aaCanonicalHotel(raw);
@@ -5294,9 +5300,17 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
     if (r.eventName === 'booking_start') hotels[name].starts += r.eventCount;
     if (r.eventName === 'booking_complete') hotels[name].completes += r.eventCount;
     if (r.eventName === 'booking_abandoned') hotels[name].abandoned += r.eventCount;
+
+    const mod = r['customEvent:source_module'];
+    if (mod && mod !== '(not set)') {
+      hotelDepts[name] = hotelDepts[name] || {};
+      hotelDepts[name][mod] = hotelDepts[name][mod] || { starts: 0, completes: 0, abandoned: 0 };
+      if (r.eventName === 'booking_start') hotelDepts[name][mod].starts += r.eventCount;
+      if (r.eventName === 'booking_complete') hotelDepts[name][mod].completes += r.eventCount;
+      if (r.eventName === 'booking_abandoned') hotelDepts[name][mod].abandoned += r.eventCount;
+    }
   });
 
-  // Merge sessions data
   sRows.forEach(r => {
     const raw = r['customUser:property'];
     const name = aaCanonicalHotel(raw);
@@ -5308,23 +5322,19 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
   const hotelList = Object.entries(hotels)
     .map(([name, h]) => ({
       name,
-      starts: h.starts,
-      completes: h.completes,
-      abandoned: h.abandoned,
+      starts: h.starts, completes: h.completes, abandoned: h.abandoned,
       conv: h.starts > 0 ? Math.round(h.completes / h.starts * 100) : 0,
-      sessions: h.sessions,
-      users: h.users,
-      startRate: h.sessions > 0 ? Math.round(h.starts / h.sessions * 100) : 0, // booking intent
+      sessions: h.sessions, users: h.users,
+      startRate: h.sessions > 0 ? Math.round(h.starts / h.sessions * 100) : 0,
     }))
     .filter(h => h.starts > 0 || h.sessions > 10)
     .sort((a, b) => b.starts - a.starts);
 
   if (hotelList.length === 0) {
-    el.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:12px 0">No per-hotel booking data yet. Waiting on <code>property</code> dimension instrumentation.</div>`;
+    el.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:12px 0">No per-hotel booking data yet.</div>`;
     return;
   }
 
-  // Portfolio averages for highlighting
   const totStarts = hotelList.reduce((a, h) => a + h.starts, 0);
   const totCompletes = hotelList.reduce((a, h) => a + h.completes, 0);
   const totSessions = hotelList.reduce((a, h) => a + h.sessions, 0);
@@ -5337,13 +5347,55 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
     return 'var(--text1)';
   };
 
+  const hotelDomId = (name) => 'hc-' + name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+
   const rowsHTML = hotelList.map(h => {
     const convColor = outlierColor(h.conv, avgConv);
     const startRateColor = outlierColor(h.startRate, avgStartRate, 2);
     const convWarning = h.conv === 0 && h.starts >= 20 ? ' <span title="0% conversion — possible tracking gap" style="cursor:help">⚠️</span>' : '';
     const startsBar = totStarts > 0 ? Math.round(h.starts / hotelList[0].starts * 100) : 0;
-    return `<tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:10px;font-weight:500;white-space:nowrap">${h.name}</td>
+    const hid = hotelDomId(h.name);
+    const depts = hotelDepts[h.name] || {};
+    const hasDepts = Object.keys(depts).length > 0;
+
+    let drilldownHTML = '';
+    if (hasDepts) {
+      const deptList = Object.entries(depts)
+        .map(([mod, d]) => ({
+          mod, name: DEPT_LABELS[mod] || mod,
+          starts: d.starts, completes: d.completes, abandoned: d.abandoned,
+          conv: d.starts > 0 ? Math.round(d.completes / d.starts * 100) : 0,
+        }))
+        .sort((a, b) => b.starts - a.starts);
+
+      const deptRows = deptList.map(d => {
+        const dConvColor = outlierColor(d.conv, h.conv, 5);
+        const dConvWarning = d.conv === 0 && d.starts >= 20 ? ' ⚠️' : '';
+        return `<tr style="border-bottom:1px solid color-mix(in srgb, var(--border) 50%, transparent)">
+          <td style="padding:6px 10px 6px 28px;font-size:11px;color:var(--text2)">${d.name}</td>
+          <td style="padding:6px 10px;text-align:right;font-size:11px">${d.starts.toLocaleString()}</td>
+          <td style="padding:6px 10px;text-align:right;font-size:11px">${d.completes.toLocaleString()}</td>
+          <td style="padding:6px 10px;text-align:right;font-size:11px;font-weight:500;color:${dConvColor}">${d.conv}%${dConvWarning}</td>
+          <td style="padding:6px 10px;text-align:right;font-size:11px;color:var(--red)">${d.abandoned.toLocaleString()}</td>
+        </tr>`;
+      }).join('');
+
+      drilldownHTML = `<tr id="${hid}-detail" style="display:none"><td colspan="7" style="padding:0;background:color-mix(in srgb, var(--bg2) 60%, transparent)">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th style="text-align:left;padding:6px 10px 6px 28px;font-size:9px;letter-spacing:0.8px;text-transform:uppercase;color:var(--text3)">Dept</th>
+            <th style="text-align:right;padding:6px 10px;font-size:9px;letter-spacing:0.8px;text-transform:uppercase;color:var(--text3)">Starts</th>
+            <th style="text-align:right;padding:6px 10px;font-size:9px;letter-spacing:0.8px;text-transform:uppercase;color:var(--text3)">Compl.</th>
+            <th style="text-align:right;padding:6px 10px;font-size:9px;letter-spacing:0.8px;text-transform:uppercase;color:var(--text3)">Conv</th>
+            <th style="text-align:right;padding:6px 10px;font-size:9px;letter-spacing:0.8px;text-transform:uppercase;color:var(--text3)">Lost</th>
+          </tr></thead>
+          <tbody>${deptRows}</tbody>
+        </table>
+      </td></tr>`;
+    }
+
+    return `<tr style="border-bottom:1px solid var(--border);cursor:${hasDepts ? 'pointer' : 'default'}" ${hasDepts ? `onclick="aaToggleHotelDetail('${hid}')"` : ''}>
+      <td style="padding:10px;font-weight:500;white-space:nowrap">${hasDepts ? '<span class="aa-hc-chevron" id="' + hid + '-chev" style="display:inline-block;transition:transform .2s;margin-right:4px;font-size:10px">▶</span>' : '<span style="display:inline-block;width:14px"></span>'}${h.name}</td>
       <td style="padding:10px;text-align:right">${h.sessions.toLocaleString()}</td>
       <td style="padding:10px;text-align:right">
         <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
@@ -5355,16 +5407,15 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
       <td style="padding:10px;text-align:right;font-weight:600;color:${convColor}">${h.conv}%${convWarning}</td>
       <td style="padding:10px;text-align:right;color:${startRateColor}">${h.startRate}%</td>
       <td style="padding:10px;text-align:right;color:var(--red)">${h.abandoned.toLocaleString()}</td>
-    </tr>`;
+    </tr>${drilldownHTML}`;
   }).join('');
 
-  // Portfolio totals row
   const totConv = totStarts > 0 ? Math.round(totCompletes / totStarts * 100) : 0;
   const totAbandoned = hotelList.reduce((a, h) => a + h.abandoned, 0);
 
   el.innerHTML = `
     <div style="font-size:11px;color:var(--text3);margin-bottom:8px">
-      Portfolio avg conversion: <strong>${avgConv}%</strong> · Avg booking intent (starts/sessions): <strong>${avgStartRate}%</strong> · Outliers ±3pt highlighted.
+      Portfolio avg conversion: <strong>${avgConv}%</strong> · Avg booking intent: <strong>${avgStartRate}%</strong> · Click a hotel row to see its dept breakdown.
     </div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:12px">
@@ -5379,7 +5430,7 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
         </tr></thead>
         <tbody>${rowsHTML}</tbody>
         <tfoot><tr style="border-top:2px solid var(--border);font-weight:600;font-size:11px;color:var(--text3)">
-          <td style="padding:10px">Portfolio</td>
+          <td style="padding:10px"><span style="display:inline-block;width:14px"></span>Portfolio</td>
           <td style="padding:10px;text-align:right">${totSessions.toLocaleString()}</td>
           <td style="padding:10px;text-align:right">${totStarts.toLocaleString()}</td>
           <td style="padding:10px;text-align:right">${totCompletes.toLocaleString()}</td>
@@ -5390,6 +5441,15 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
       </table>
     </div>
   `;
+}
+
+function aaToggleHotelDetail(hid) {
+  const detail = document.getElementById(hid + '-detail');
+  const chev = document.getElementById(hid + '-chev');
+  if (!detail) return;
+  const open = detail.style.display !== 'none';
+  detail.style.display = open ? 'none' : 'table-row';
+  if (chev) chev.style.transform = open ? '' : 'rotate(90deg)';
 }
 
 function aaRenderKPIs(funnelData, screensData, healthData) {
