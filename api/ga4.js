@@ -475,6 +475,26 @@ function buildReportBody(report, startDate, endDate) {
       limit: 20,
     },
 
+    // ── Booking funnel by hotel — for Hotel Comparison matrix ──────────
+    // Same events as booking_funnel but grouped by hotel (property) instead
+    // of source_module. Returns starts/completes/abandoned per hotel.
+    booking_funnel_by_hotel: {
+      dateRanges: dateRange,
+      dimensions: [
+        { name: 'eventName' },
+        { name: 'customUser:property' },
+      ],
+      metrics: [{ name: 'eventCount' }],
+      dimensionFilter: {
+        orGroup: { expressions: [
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'booking_start' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'booking_complete' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'booking_abandoned' } } },
+        ]}
+      },
+      limit: 200,
+    },
+
     // ── Department entry source — where guests enter each dept from ────
     // source_screen tells us: home widget, nav bar, deep link, etc.
     // If source_screen is (not set), it's an instrumentation gap.

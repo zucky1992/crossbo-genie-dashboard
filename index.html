@@ -755,6 +755,19 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
       </div>
     </div>
 
+    <!-- v50: Hotel Comparison matrix -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-head">
+        <div>
+          <div class="card-title">Hotel comparison</div>
+          <div class="card-sub">Booking performance by hotel · outliers highlighted vs portfolio average</div>
+        </div>
+      </div>
+      <div id="aa-hotel-compare-body" style="padding:0 20px 20px">
+        <div class="fu-loading"><div class="fu-spinner"></div>Comparing hotels...</div>
+      </div>
+    </div>
+
     <!-- Section 2: Department cards -->
     <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px">By department · drill down</div>
 
@@ -4793,7 +4806,7 @@ async function aaLoad(force = false) {
     //     {current: {...}, previous: {...}}.
     // The prev range is 'NdaysAgo → today' shifted back by N days
     // (e.g. 30d current = day-60 to day-30 previous).
-    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,abandon_detail,top_services,recommendations,notifications,app_health,portfolio_metrics,sessions_by_hotel,dept_entry_source,daily_sparkline,daily_events_sparkline';
+    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,abandon_detail,top_services,recommendations,notifications,app_health,portfolio_metrics,sessions_by_hotel,dept_entry_source,booking_funnel_by_hotel,daily_sparkline,daily_events_sparkline';
     const prevRange = aaComputePrevRange(aaStartDate, aaEndDate);
     let multiUrl = `${AA_FN}?multi=${reportList}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
     if (prevRange) {
@@ -4827,6 +4840,7 @@ async function aaLoad(force = false) {
     const portfolioMetrics = md.portfolio_metrics || { rows: [] };
     const sessionsByHotel = md.sessions_by_hotel || { rows: [] };
     const deptEntrySource = md.dept_entry_source || { rows: [] };
+    const funnelByHotel = md.booking_funnel_by_hotel || { rows: [] };
     const dailySparkline = md.daily_sparkline || { rows: [] };
     const dailyEventsSparkline = md.daily_events_sparkline || { rows: [] };
     aaSparklineData = { daily: dailySparkline, events: dailyEventsSparkline };
@@ -4846,6 +4860,7 @@ async function aaLoad(force = false) {
     aaCache[ck('portfolio_metrics')] = portfolioMetrics;
     aaCache[ck('sessions_by_hotel')] = sessionsByHotel;
     aaCache[ck('dept_entry_source')] = deptEntrySource;
+    aaCache[ck('booking_funnel_by_hotel')] = funnelByHotel;
 
     const anyFailed = Object.values(md).some(v => v && v.error);
 
@@ -4861,6 +4876,7 @@ async function aaLoad(force = false) {
     // v49: Phase 2 additions
     aaRenderSignal(md, mdPrev);
     aaRenderDeptRank(md, mdPrev);
+    aaRenderHotelComparison(funnelByHotel, sessionsByHotel);
     aaRenderFunnel(funnel);
     aaRenderDeptPills(funnel, screens);
     aaRenderRecs(recs);
@@ -4939,7 +4955,12 @@ function aaComputeSignals(curr, prev) {
 
   // Rule 3: per-dept conversion shifts. Group by source_module for both windows,
   // then flag any dept whose conv rate moved ±5pt with at least 50 starts.
-  const DEPT_LABELS_LOCAL = { dining: 'IRD', activity: 'Activity', spa: 'SPA', restaurant: 'Restaurant', taxi: 'Taxi', housekeeping: 'Housekeeping', store: 'Store' };
+  const DEPT_LABELS_LOCAL = {
+    dining: 'IRD', activity: 'Activity', spa: 'SPA', restaurant: 'Restaurant',
+    taxi: 'Taxi', housekeeping: 'Housekeeping', store: 'Store',
+    promotions: 'Promotions', bms_spa: 'BMS SPA', bms_dining: 'BMS Dining',
+    bms_activity: 'BMS Activity', bms_restaurant: 'BMS Restaurant',
+  };
   const byDept = (rows) => {
     const acc = {};
     rows.forEach(r => {
@@ -5087,7 +5108,12 @@ function aaRenderSignal(curr, prev) {
 let aaDeptRankSort = { col: 'conv', dir: 'asc' }; // default: conversion ascending (worst first)
 
 function aaComputeDeptRankRows(curr, prev) {
-  const DEPT_LABELS_LOCAL = { dining: 'IRD', activity: 'Activity', spa: 'SPA', restaurant: 'Restaurant', taxi: 'Taxi', housekeeping: 'Housekeeping', store: 'Store', home: 'Home' };
+  const DEPT_LABELS_LOCAL = {
+    dining: 'IRD', activity: 'Activity', spa: 'SPA', restaurant: 'Restaurant',
+    taxi: 'Taxi', housekeeping: 'Housekeeping', store: 'Store', home: 'Home',
+    promotions: 'Promotions', bms_spa: 'BMS SPA', bms_dining: 'BMS Dining',
+    bms_activity: 'BMS Activity', bms_restaurant: 'BMS Restaurant',
+  };
   const rowsCurr = aaRows(curr.booking_funnel || { rows: [] });
   const rowsPrev = prev ? aaRows(prev.booking_funnel || { rows: [] }) : [];
   const byDept = (rows) => {
@@ -5104,6 +5130,8 @@ function aaComputeDeptRankRows(curr, prev) {
   };
   const c = byDept(rowsCurr);
   const p = byDept(rowsPrev);
+  // Track whether prev had ANY dept-level source_module data
+  const prevHasDeptData = Object.keys(p).length > 0;
   return Object.keys(c).map(mod => {
     const cur = c[mod];
     const prv = p[mod] || { starts: 0, completes: 0, abandoned: 0 };
@@ -5114,9 +5142,10 @@ function aaComputeDeptRankRows(curr, prev) {
       mod, name: DEPT_LABELS_LOCAL[mod] || mod,
       starts: cur.starts, completes: cur.completes, abandoned: cur.abandoned,
       conv, prevConv, dropRate,
-      lostBookings: cur.abandoned, // absolute lost — matches "money on table" framing
+      lostBookings: cur.abandoned,
       startsDelta: prv.starts > 0 ? Math.round((cur.starts - prv.starts) / prv.starts * 100) : null,
-      convDelta: prv.starts >= 50 ? conv - prevConv : null,
+      convDelta: prv.starts >= 20 ? conv - prevConv : null,
+      _prevHasDeptData: prevHasDeptData,
     };
   });
 }
@@ -5162,28 +5191,38 @@ function aaRenderDeptRank(curr, prev) {
 
   const portfolioAvgConv = rows.reduce((a, r) => a + r.completes, 0) / Math.max(rows.reduce((a, r) => a + r.starts, 0), 1) * 100;
 
+  // Diagnostic: detect if prev dept data is missing entirely
+  const prevMissing = prev && rows.length > 0 && !rows[0]._prevHasDeptData;
+  const allDeltasNull = rows.every(r => r.startsDelta === null && r.convDelta === null);
+
   const rowHTML = rows.map(r => {
     const convVsAvg = r.conv - Math.round(portfolioAvgConv);
     const convColor = r.conv >= portfolioAvgConv + 3 ? 'var(--teal)' : r.conv <= portfolioAvgConv - 3 ? 'var(--red)' : 'var(--text1)';
+    // Flag 0% conv with high starts as potential instrumentation issue
+    const convWarning = r.conv === 0 && r.starts >= 50 ? ' <span title="0% conversion on high volume — possible tracking gap" style="cursor:help">⚠️</span>' : '';
     const startsDeltaHTML = r.startsDelta === null ? '<span style="color:var(--text3)">—</span>'
       : r.startsDelta > 0 ? `<span style="color:var(--teal)">▲ ${r.startsDelta}%</span>`
       : r.startsDelta < 0 ? `<span style="color:var(--red)">▼ ${Math.abs(r.startsDelta)}%</span>`
-      : `<span style="color:var(--text3)">—</span>`;
+      : `<span style="color:var(--text3)">0%</span>`;
     const convDeltaHTML = r.convDelta === null ? '<span style="color:var(--text3)">—</span>'
       : r.convDelta > 0 ? `<span style="color:var(--teal)">▲ ${r.convDelta}pt</span>`
       : r.convDelta < 0 ? `<span style="color:var(--red)">▼ ${Math.abs(r.convDelta)}pt</span>`
-      : `<span style="color:var(--text3)">—</span>`;
+      : `<span style="color:var(--text3)">0pt</span>`;
 
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:10px;font-weight:500">${r.name}</td>
       <td style="padding:10px;text-align:right">${r.starts.toLocaleString()}</td>
       <td style="padding:10px;text-align:right;font-size:11px">${startsDeltaHTML}</td>
       <td style="padding:10px;text-align:right">${r.completes.toLocaleString()}</td>
-      <td style="padding:10px;text-align:right;font-weight:600;color:${convColor}">${r.conv}%</td>
+      <td style="padding:10px;text-align:right;font-weight:600;color:${convColor}">${r.conv}%${convWarning}</td>
       <td style="padding:10px;text-align:right;font-size:11px">${convDeltaHTML}</td>
       <td style="padding:10px;text-align:right;color:var(--red)">${r.abandoned.toLocaleString()}</td>
     </tr>`;
   }).join('');
+
+  const diagNote = (prevMissing || allDeltasNull) && prev
+    ? `<div style="font-size:10px;color:var(--amber);margin-top:8px;padding:6px 8px;background:color-mix(in srgb, var(--amber) 8%, transparent);border-radius:4px">⚠ Δ columns show "—" because the previous period lacks <code>source_module</code> attribution on booking events. Deltas will populate as instrumentation coverage extends further back.</div>`
+    : '';
 
   el.innerHTML = `
     <div style="font-size:11px;color:var(--text3);margin-bottom:8px">
@@ -5201,6 +5240,153 @@ function aaRenderDeptRank(curr, prev) {
           ${th('lostBookings', 'Lost')}
         </tr></thead>
         <tbody>${rowHTML}</tbody>
+      </table>
+    </div>
+    ${diagNote}
+  `;
+}
+
+/* ══════════════════════════════════════════════════════════
+   PHASE 2 (v50): HOTEL COMPARISON MATRIX
+   Hotels down the left, key metrics across the top.
+   Outliers highlighted vs portfolio average.
+   Uses booking_funnel_by_hotel + sessions_by_hotel.
+══════════════════════════════════════════════════════════ */
+
+// Normalize hotel names to canonical short form for display
+function aaCanonicalHotel(name) {
+  if (!name || name === '(not set)') return null;
+  const n = name.toLowerCase().replace(/['']/g, "'");
+  if (n.includes("cook's club") || n.includes('cooks club')) return "Cook's Club";
+  if (n.includes('casa cook')) return 'Casa Cook';
+  if (n.includes('steigenberger')) return 'Steigenberger';
+  if (n.includes('chedi')) return 'The Chedi';
+  if (n.includes('ancient sands')) return 'Ancient Sands';
+  if (n.includes('sultan bey')) return 'Sultan Bey';
+  if (n.includes('mosaique')) return 'Mosaique';
+  if (n.includes("captain's inn") || n.includes("captains inn")) return "Captain's Inn";
+  if (n.includes('ali pasha')) return 'Ali Pasha';
+  if (n.includes('fanadir')) return 'Fanadir';
+  if (n.includes("turtle's inn") || n.includes("turtles inn")) return "Turtle's Inn";
+  return null; // Unknown hotel — filter out
+}
+
+function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
+  const el = document.getElementById('aa-hotel-compare-body');
+  if (!el) return;
+
+  // Only show when viewing All Hotels (not filtered to one)
+  if (aaHotelId) {
+    el.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:12px 0">Hotel comparison shows when viewing <strong>All Hotels</strong>. Currently filtered to a single hotel.</div>`;
+    return;
+  }
+
+  const fRows = aaRows(funnelByHotelData);
+  const sRows = aaRows(sessionsByHotelData);
+
+  // Build per-hotel metrics from booking funnel
+  const hotels = {};
+  fRows.forEach(r => {
+    const raw = r['customUser:property'];
+    const name = aaCanonicalHotel(raw);
+    if (!name) return;
+    hotels[name] = hotels[name] || { starts: 0, completes: 0, abandoned: 0, sessions: 0, users: 0 };
+    if (r.eventName === 'booking_start') hotels[name].starts += r.eventCount;
+    if (r.eventName === 'booking_complete') hotels[name].completes += r.eventCount;
+    if (r.eventName === 'booking_abandoned') hotels[name].abandoned += r.eventCount;
+  });
+
+  // Merge sessions data
+  sRows.forEach(r => {
+    const raw = r['customUser:property'];
+    const name = aaCanonicalHotel(raw);
+    if (!name || !hotels[name]) return;
+    hotels[name].sessions += parseInt(r.sessions || 0);
+    hotels[name].users += parseInt(r.totalUsers || 0);
+  });
+
+  const hotelList = Object.entries(hotels)
+    .map(([name, h]) => ({
+      name,
+      starts: h.starts,
+      completes: h.completes,
+      abandoned: h.abandoned,
+      conv: h.starts > 0 ? Math.round(h.completes / h.starts * 100) : 0,
+      sessions: h.sessions,
+      users: h.users,
+      startRate: h.sessions > 0 ? Math.round(h.starts / h.sessions * 100) : 0, // booking intent
+    }))
+    .filter(h => h.starts > 0 || h.sessions > 10)
+    .sort((a, b) => b.starts - a.starts);
+
+  if (hotelList.length === 0) {
+    el.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:12px 0">No per-hotel booking data yet. Waiting on <code>property</code> dimension instrumentation.</div>`;
+    return;
+  }
+
+  // Portfolio averages for highlighting
+  const totStarts = hotelList.reduce((a, h) => a + h.starts, 0);
+  const totCompletes = hotelList.reduce((a, h) => a + h.completes, 0);
+  const totSessions = hotelList.reduce((a, h) => a + h.sessions, 0);
+  const avgConv = totStarts > 0 ? Math.round(totCompletes / totStarts * 100) : 0;
+  const avgStartRate = totSessions > 0 ? Math.round(totStarts / totSessions * 100) : 0;
+
+  const outlierColor = (val, avg, threshold = 3) => {
+    if (val >= avg + threshold) return 'var(--teal)';
+    if (val <= avg - threshold) return 'var(--red)';
+    return 'var(--text1)';
+  };
+
+  const rowsHTML = hotelList.map(h => {
+    const convColor = outlierColor(h.conv, avgConv);
+    const startRateColor = outlierColor(h.startRate, avgStartRate, 2);
+    const convWarning = h.conv === 0 && h.starts >= 20 ? ' <span title="0% conversion — possible tracking gap" style="cursor:help">⚠️</span>' : '';
+    const startsBar = totStarts > 0 ? Math.round(h.starts / hotelList[0].starts * 100) : 0;
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:10px;font-weight:500;white-space:nowrap">${h.name}</td>
+      <td style="padding:10px;text-align:right">${h.sessions.toLocaleString()}</td>
+      <td style="padding:10px;text-align:right">
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
+          <span>${h.starts.toLocaleString()}</span>
+          <div style="width:40px;height:6px;background:var(--border);border-radius:3px;overflow:hidden"><div style="width:${startsBar}%;height:100%;background:var(--teal);border-radius:3px"></div></div>
+        </div>
+      </td>
+      <td style="padding:10px;text-align:right">${h.completes.toLocaleString()}</td>
+      <td style="padding:10px;text-align:right;font-weight:600;color:${convColor}">${h.conv}%${convWarning}</td>
+      <td style="padding:10px;text-align:right;color:${startRateColor}">${h.startRate}%</td>
+      <td style="padding:10px;text-align:right;color:var(--red)">${h.abandoned.toLocaleString()}</td>
+    </tr>`;
+  }).join('');
+
+  // Portfolio totals row
+  const totConv = totStarts > 0 ? Math.round(totCompletes / totStarts * 100) : 0;
+  const totAbandoned = hotelList.reduce((a, h) => a + h.abandoned, 0);
+
+  el.innerHTML = `
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">
+      Portfolio avg conversion: <strong>${avgConv}%</strong> · Avg booking intent (starts/sessions): <strong>${avgStartRate}%</strong> · Outliers ±3pt highlighted.
+    </div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr>
+          <th style="text-align:left;padding:8px 10px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)">Hotel</th>
+          <th style="text-align:right;padding:8px 10px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)">Sessions</th>
+          <th style="text-align:right;padding:8px 10px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)">Starts</th>
+          <th style="text-align:right;padding:8px 10px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)">Completes</th>
+          <th style="text-align:right;padding:8px 10px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)">Conv %</th>
+          <th style="text-align:right;padding:8px 10px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)">Intent %</th>
+          <th style="text-align:right;padding:8px 10px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)">Lost</th>
+        </tr></thead>
+        <tbody>${rowsHTML}</tbody>
+        <tfoot><tr style="border-top:2px solid var(--border);font-weight:600;font-size:11px;color:var(--text3)">
+          <td style="padding:10px">Portfolio</td>
+          <td style="padding:10px;text-align:right">${totSessions.toLocaleString()}</td>
+          <td style="padding:10px;text-align:right">${totStarts.toLocaleString()}</td>
+          <td style="padding:10px;text-align:right">${totCompletes.toLocaleString()}</td>
+          <td style="padding:10px;text-align:right">${totConv}%</td>
+          <td style="padding:10px;text-align:right">${avgStartRate}%</td>
+          <td style="padding:10px;text-align:right">${totAbandoned.toLocaleString()}</td>
+        </tr></tfoot>
       </table>
     </div>
   `;
