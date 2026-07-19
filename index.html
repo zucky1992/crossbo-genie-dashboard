@@ -707,6 +707,9 @@ body.show-engg .engg-note { display: block !important; }
 
   <div class="scroll">
 
+    <!-- v50: Instrumentation coverage indicator -->
+    <div id="aa-coverage-bar" style="margin-bottom:14px"></div>
+
     <!-- v50: Month on Month Trend section — collapsible -->
     <div class="card" style="margin-bottom:16px">
       <div class="card-head" style="align-items:center;cursor:pointer" onclick="aaMomToggle()">
@@ -4972,6 +4975,7 @@ async function aaLoad(force = false) {
     aaEntrySourceData = deptEntrySource;
 
     // v49: Phase 2 additions
+    aaRenderCoverage(funnel, deptEntrySource);
     aaRenderSignal(md, mdPrev);
     aaRenderDeptRank(md, mdPrev);
 
@@ -5165,6 +5169,66 @@ function aaComputeSignals(curr, prev) {
 }
 
 // Render the Signal card. If no signals, show a "quiet period" state.
+/* ══════════════════════════════════════════════════════════
+   INSTRUMENTATION COVERAGE INDICATOR (v50)
+   Shows what % of booking_start events carry source_module and
+   source_screen for the selected period. Lets you watch engineering
+   fixes land without digging through GA4.
+══════════════════════════════════════════════════════════ */
+function aaRenderCoverage(funnelData, entrySourceData) {
+  const el = document.getElementById('aa-coverage-bar');
+  if (!el) return;
+
+  // source_module coverage from booking_funnel
+  const fRows = aaRows(funnelData).filter(r => r.eventName === 'booking_start');
+  let modTotal = 0, modAttributed = 0;
+  fRows.forEach(r => {
+    const mod = r['customEvent:source_module'];
+    modTotal += r.eventCount;
+    if (mod && mod !== '(not set)') modAttributed += r.eventCount;
+  });
+
+  // source_screen coverage from dept_entry_source
+  const eRows = aaRows(entrySourceData);
+  let scrTotal = 0, scrAttributed = 0;
+  eRows.forEach(r => {
+    const scr = r['customEvent:source_screen'];
+    scrTotal += r.eventCount;
+    if (scr && scr !== '(not set)') scrAttributed += r.eventCount;
+  });
+
+  const modPct = modTotal > 0 ? Math.round(modAttributed / modTotal * 100) : null;
+  const scrPct = scrTotal > 0 ? Math.round(scrAttributed / scrTotal * 100) : null;
+
+  if (modPct === null && scrPct === null) { el.innerHTML = ''; return; }
+
+  const badge = (label, pct, param) => {
+    if (pct === null) return `<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3)"><code style="font-size:10px">${param}</code> <span>no data</span></div>`;
+    const color = pct >= 90 ? 'var(--teal)' : pct >= 50 ? 'var(--amber)' : 'var(--red)';
+    const icon = pct >= 90 ? '✓' : '⚠';
+    return `<div style="display:flex;align-items:center;gap:8px">
+      <code style="font-size:10px;color:var(--text2)">${param}</code>
+      <div style="width:80px;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${color};border-radius:3px"></div>
+      </div>
+      <span style="font-size:11px;font-weight:600;color:${color}">${icon} ${pct}%</span>
+      <span style="font-size:10px;color:var(--text3)">${label}</span>
+    </div>`;
+  };
+
+  const bothGood = modPct >= 90 && scrPct >= 90;
+  const barColor = bothGood ? 'var(--teal)' : 'var(--amber)';
+
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;padding:8px 14px;background:var(--bg2);border-radius:8px;border-left:3px solid ${barColor}">
+      <span style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);font-weight:500">Attribution coverage</span>
+      ${badge('dept', modPct, 'source_module')}
+      ${badge('entry point', scrPct, 'source_screen')}
+      <span style="font-size:9px;color:var(--text3);margin-left:auto">% of booking_start events with the parameter · this period</span>
+    </div>
+  `;
+}
+
 function aaRenderSignal(curr, prev) {
   const el = document.getElementById('aa-signal-body');
   if (!el) return;
