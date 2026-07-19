@@ -396,10 +396,7 @@ function buildReportBody(report, startDate, endDate) {
     // ── App health ────────────────────────────────────────────────────
     app_health: {
       dateRanges: dateRange,
-      dimensions: [
-        { name: 'eventName' },
-        { name: 'customUser:property' },
-      ],
+      dimensions: [{ name: 'eventName' }],
       metrics: [{ name: 'eventCount' }],
       dimensionFilter: {
         orGroup: { expressions: [
@@ -413,6 +410,22 @@ function buildReportBody(report, startDate, endDate) {
         ]}
       },
       limit: 20,
+    },
+
+    // ── Crashes by hotel — for hotel comparison only ──────────────────
+    // Separate from app_health because adding customUser:property to
+    // app_health causes GA4 to drop crash events that lack user context.
+    crashes_by_hotel: {
+      dateRanges: dateRange,
+      dimensions: [
+        { name: 'eventName' },
+        { name: 'customUser:property' },
+      ],
+      metrics: [{ name: 'eventCount' }],
+      dimensionFilter: {
+        filter: { fieldName: 'eventName', stringFilter: { value: 'app_exception' } },
+      },
+      limit: 100,
     },
 
     // ── Spotlight taps ────────────────────────────────────────────────

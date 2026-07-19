@@ -4888,7 +4888,7 @@ async function aaLoad(force = false) {
     //     {current: {...}, previous: {...}}.
     // The prev range is 'NdaysAgo → today' shifted back by N days
     // (e.g. 30d current = day-60 to day-30 previous).
-    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,abandon_detail,top_services,recommendations,notifications,app_health,portfolio_metrics,sessions_by_hotel,dept_entry_source,booking_funnel_by_hotel,daily_sparkline,daily_events_sparkline';
+    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,abandon_detail,top_services,recommendations,notifications,app_health,portfolio_metrics,sessions_by_hotel,dept_entry_source,booking_funnel_by_hotel,crashes_by_hotel,daily_sparkline,daily_events_sparkline';
     const prevRange = aaComputePrevRange(aaStartDate, aaEndDate);
     let multiUrl = `${AA_FN}?multi=${reportList}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
     if (prevRange) {
@@ -4923,6 +4923,7 @@ async function aaLoad(force = false) {
     const sessionsByHotel = md.sessions_by_hotel || { rows: [] };
     const deptEntrySource = md.dept_entry_source || { rows: [] };
     const funnelByHotel = md.booking_funnel_by_hotel || { rows: [] };
+    const crashesByHotel = md.crashes_by_hotel || { rows: [] };
     const dailySparkline = md.daily_sparkline || { rows: [] };
     const dailyEventsSparkline = md.daily_events_sparkline || { rows: [] };
     aaSparklineData = { daily: dailySparkline, events: dailyEventsSparkline };
@@ -4943,6 +4944,7 @@ async function aaLoad(force = false) {
     aaCache[ck('sessions_by_hotel')] = sessionsByHotel;
     aaCache[ck('dept_entry_source')] = deptEntrySource;
     aaCache[ck('booking_funnel_by_hotel')] = funnelByHotel;
+    aaCache[ck('crashes_by_hotel')] = crashesByHotel;
 
     const anyFailed = Object.values(md).some(v => v && v.error);
 
@@ -4958,7 +4960,7 @@ async function aaLoad(force = false) {
     // v49: Phase 2 additions
     aaRenderSignal(md, mdPrev);
     aaRenderDeptRank(md, mdPrev);
-    aaRenderHotelComparison(funnelByHotel, sessionsByHotel, health);
+    aaRenderHotelComparison(funnelByHotel, sessionsByHotel, health, crashesByHotel);
     aaRenderFunnel(funnel);
     aaRenderDeptPills(funnel, screens);
     aaRenderRecs(recs);
@@ -5080,8 +5082,8 @@ function aaComputeSignals(curr, prev) {
   });
 
   // Rule 4: app crash spike (±30%)
-  const cCrash = aaRows(curr.app_health || { rows: [] }).filter(r => r.eventName === 'app_exception').reduce((a, r) => a + r.eventCount, 0);
-  const pCrash = aaRows(prev.app_health || { rows: [] }).filter(r => r.eventName === 'app_exception').reduce((a, r) => a + r.eventCount, 0);
+  const cCrash = aaRows(curr.app_health || { rows: [] }).find(r => r.eventName === 'app_exception')?.eventCount || 0;
+  const pCrash = aaRows(prev.app_health || { rows: [] }).find(r => r.eventName === 'app_exception')?.eventCount || 0;
   if (pCrash > 0) {
     const pct = Math.round((cCrash - pCrash) / pCrash * 100);
     if (Math.abs(pct) >= 30) {
@@ -5366,7 +5368,7 @@ function aaCanonicalHotel(name) {
   return null;
 }
 
-function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData, healthData) {
+function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData, healthData, crashesByHotelData) {
   const el = document.getElementById('aa-hotel-compare-body');
   if (!el) return;
 
@@ -5384,7 +5386,7 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData, healthD
 
   const fRows = aaRows(funnelByHotelData);
   const sRows = aaRows(sessionsByHotelData);
-  const hRows = healthData ? aaRows(healthData) : [];
+  const cRows = crashesByHotelData ? aaRows(crashesByHotelData) : [];
 
   const hotels = {};
   const hotelDepts = {};
@@ -5407,8 +5409,8 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData, healthD
     }
   });
 
-  // Merge crashes per hotel from app_health
-  hRows.forEach(r => {
+  // Merge crashes per hotel from separate crashes_by_hotel report
+  cRows.forEach(r => {
     if (r.eventName !== 'app_exception') return;
     const raw = r['customUser:property'];
     const name = aaCanonicalHotel(raw);
@@ -5589,7 +5591,8 @@ function aaHotelSortToggle(col) {
   const f = aaCache[ck('booking_funnel_by_hotel')] || { rows: [] };
   const s = aaCache[ck('sessions_by_hotel')] || { rows: [] };
   const h = aaCache[ck('app_health')] || { rows: [] };
-  aaRenderHotelComparison(f, s, h);
+  const c = aaCache[ck('crashes_by_hotel')] || { rows: [] };
+  aaRenderHotelComparison(f, s, h, c);
 }
 
 function aaToggleHotelDetail(hid) {
@@ -5609,7 +5612,7 @@ function aaRenderKPIs(funnelData, screensData, healthData) {
   const convRate = starts > 0 ? Math.round(completes / starts * 100) : 0;
   const dropRate = starts > 0 ? Math.round(abandoned / starts * 100) : 0;
   const hRows = healthData ? aaRows(healthData) : [];
-  const crashes = hRows.filter(r => r.eventName === 'app_exception').reduce((a, r) => a + r.eventCount, 0);
+  const crashes = hRows.find(r => r.eventName === 'app_exception')?.eventCount || 0;
 
   // v48: previous-period values for delta pills. If aaPrevData is null
   // (period doesn't support prev, e.g. custom date), we skip deltas cleanly.
@@ -5623,7 +5626,7 @@ function aaRenderKPIs(funnelData, screensData, healthData) {
     prevConvRate = prevStarts > 0 ? Math.round(prevCompletes / prevStarts * 100) : 0;
     prevDropRate = prevStarts > 0 ? Math.round(prevAbandoned / prevStarts * 100) : 0;
     const pHealth = aaRows(aaPrevData.app_health || { rows: [] });
-    prevCrashes = pHealth.filter(r => r.eventName === 'app_exception').reduce((a, r) => a + r.eventCount, 0);
+    prevCrashes = pHealth.find(r => r.eventName === 'app_exception')?.eventCount || 0;
   }
 
   // Sparklines from daily_events_sparkline
@@ -6648,7 +6651,7 @@ function aaRenderAppHealth(data, screensData) {
   const el = document.getElementById('aa-health-body');
   if (!el) return;
   const rows = aaRows(data);
-  const get = name => rows.filter(r => r.eventName === name).reduce((a, r) => a + r.eventCount, 0);
+  const get = name => rows.find(r => r.eventName === name)?.eventCount || 0;
   const crashes = get('app_exception');
   const uninstalls = get('app_remove');
   const installs = get('first_open');
