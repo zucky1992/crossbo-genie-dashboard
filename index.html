@@ -5720,7 +5720,8 @@ function aaMomRender(sessionsData, eventsData) {
   }
 
   const fmtYM = ym => `${MNAMES[parseInt(ym.slice(4))]} '${ym.slice(2,4)}`;
-  if (rangeLabel) rangeLabel.textContent = `· ${fmtYM(allMonths[0])} – ${fmtYM(allMonths[n-1])} · ${n} months`;
+  const shortYM = ym => MNAMES[parseInt(ym.slice(4))];
+  if (rangeLabel) rangeLabel.textContent = `· ${fmtYM(allMonths[0])} – ${fmtYM(allMonths[n-1])}`;
 
   // Build series
   const sessionsByMonth = {}, usersByMonth = {};
@@ -5739,95 +5740,76 @@ function aaMomRender(sessionsData, eventsData) {
     if (r.eventName === 'app_exception') crashesByMonth[ym] = (crashesByMonth[ym] || 0) + r.eventCount;
   });
 
-  function seriesSummary(data) {
+  function stat(data) {
     const latest = data[allMonths[n-1]] || 0;
     const prev = n >= 2 ? (data[allMonths[n-2]] || 0) : 0;
     const delta = prev > 0 ? Math.round((latest - prev) / prev * 100) : (latest > 0 ? 100 : 0);
-    return { latest, prev, delta };
-  }
-
-  // Compact pill with mini sparkline
-  function miniSpark(data, color) {
-    const values = allMonths.map(m => data[m] || 0);
-    const max = Math.max(...values, 1);
-    const pts = values.map((v, i) => {
-      const x = n > 1 ? (i / (n - 1)) * 36 + 2 : 20;
-      const y = 12 - (v / max) * 10;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    }).join(' ');
-    return `<svg width="40" height="14" viewBox="0 0 40 14" style="flex-shrink:0"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.2" stroke-linejoin="round"/></svg>`;
+    return { latest, delta };
   }
 
   const metrics = [
-    { key: 'sessions', name: 'Sessions', data: sessionsByMonth, color: '#6366f1', inv: false },
-    { key: 'users', name: 'Users', data: usersByMonth, color: '#8b5cf6', inv: false },
-    { key: 'starts', name: 'Starts', data: startsByMonth, color: '#0d9488', inv: false },
-    { key: 'completed', name: 'Completed', data: completesByMonth, color: '#10b981', inv: false },
-    { key: 'abandoned', name: 'Abandoned', data: abandonedByMonth, color: '#ef4444', inv: true },
-    { key: 'crashes', name: 'Crashes', data: crashesByMonth, color: '#f59e0b', inv: true },
+    { name: 'Sessions', data: sessionsByMonth, color: '#6366f1', inv: false },
+    { name: 'Users', data: usersByMonth, color: '#8b5cf6', inv: false },
+    { name: 'Starts', data: startsByMonth, color: '#0d9488', inv: false },
+    { name: 'Completed', data: completesByMonth, color: '#10b981', inv: false },
+    { name: 'Abandoned', data: abandonedByMonth, color: '#ef4444', inv: true },
+    { name: 'Crashes', data: crashesByMonth, color: '#f59e0b', inv: true },
   ];
 
-  // Pills row
+  // Pills (collapsed view)
   pills.innerHTML = metrics.map(m => {
-    const s = seriesSummary(m.data);
-    const dc = m.inv
-      ? (s.delta > 0 ? 'var(--red)' : s.delta < 0 ? 'var(--teal)' : 'var(--text3)')
-      : (s.delta > 0 ? 'var(--teal)' : s.delta < 0 ? 'var(--red)' : 'var(--text3)');
+    const s = stat(m.data);
+    const values = allMonths.map(ym => m.data[ym] || 0);
+    const max = Math.max(...values, 1);
+    const sparkPts = values.map((v, i) => {
+      const x = n > 1 ? (i / (n - 1)) * 34 + 3 : 20;
+      const y = 11 - (v / max) * 8;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+    const dc = m.inv ? (s.delta > 0 ? 'var(--red)' : s.delta < 0 ? 'var(--teal)' : 'var(--text3)')
+                     : (s.delta > 0 ? 'var(--teal)' : s.delta < 0 ? 'var(--red)' : 'var(--text3)');
     const ds = s.delta > 0 ? '▲' : s.delta < 0 ? '▼' : '';
-    return `<div style="display:flex;align-items:center;gap:6px;padding:4px 10px;background:var(--bg2);border-radius:6px;font-size:11px">
-      ${miniSpark(m.data, m.color)}
+    return `<div style="display:flex;align-items:center;gap:5px;padding:3px 8px;background:var(--bg2);border-radius:5px;font-size:10px">
+      <svg width="40" height="13" viewBox="0 0 40 13"><polyline points="${sparkPts}" fill="none" stroke="${m.color}" stroke-width="1.1" stroke-linejoin="round"/></svg>
       <span style="color:var(--text3)">${m.name}</span>
       <span style="font-weight:600">${s.latest.toLocaleString()}</span>
-      <span style="font-size:9px;color:${dc}">${ds}${Math.abs(s.delta)}%</span>
+      <span style="font-size:8px;color:${dc}">${ds}${Math.abs(s.delta)}%</span>
     </div>`;
   }).join('');
 
-  // Bar chart builder — clean, compact, consistent
-  function barChart(m) {
+  // Expanded view: compact table-style with inline horizontal bars
+  const fmtNum = v => v >= 10000 ? (v/1000).toFixed(1)+'k' : v >= 1000 ? (v/1000).toFixed(1)+'k' : v.toString();
+
+  function chartRow(m) {
     const values = allMonths.map(ym => m.data[ym] || 0);
     const max = Math.max(...values, 1);
-    const s = seriesSummary(m.data);
-    const dc = m.inv
-      ? (s.delta > 0 ? 'var(--red)' : s.delta < 0 ? 'var(--teal)' : 'var(--text3)')
-      : (s.delta > 0 ? 'var(--teal)' : s.delta < 0 ? 'var(--red)' : 'var(--text3)');
+    const s = stat(m.data);
+    const dc = m.inv ? (s.delta > 0 ? 'var(--red)' : s.delta < 0 ? 'var(--teal)' : 'var(--text3)')
+                     : (s.delta > 0 ? 'var(--teal)' : s.delta < 0 ? 'var(--red)' : 'var(--text3)');
     const ds = s.delta > 0 ? '▲' : s.delta < 0 ? '▼' : '';
 
-    // SVG bar chart
-    const barW = Math.min(30, 80 / n); // bar width adapts to month count
-    const gap = 4;
-    const totalW = n * (barW + gap) - gap;
-    const chartH = 60;
-    const padTop = 14; // space for value labels above bars
-    const padBottom = 16; // space for month labels
-
-    const bars = values.map((v, i) => {
-      const barH = max > 0 ? (v / max) * chartH : 0;
-      const x = i * (barW + gap);
-      const y = padTop + chartH - barH;
+    const barsHtml = allMonths.map((ym, i) => {
+      const v = values[i];
+      const pct = max > 0 ? Math.max((v / max) * 100, 2) : 2;
       const isLatest = i === n - 1;
-      const opacity = isLatest ? 1 : 0.6;
-      const label = fmtYM(allMonths[i]);
-      const fmtVal = v >= 10000 ? (v/1000).toFixed(1) + 'k' : v >= 1000 ? (v/1000).toFixed(1) + 'k' : v.toString();
-
-      return `<g>
-        <rect x="${x}" y="${y}" width="${barW}" height="${barH}" rx="2" fill="${m.color}" opacity="${opacity}"/>
-        <text x="${x + barW/2}" y="${y - 3}" text-anchor="middle" font-size="7" font-weight="600" fill="${m.color}">${fmtVal}</text>
-        <text x="${x + barW/2}" y="${padTop + chartH + 11}" text-anchor="middle" font-size="6.5" fill="var(--text3)">${label}</text>
-      </g>`;
+      return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px">
+        <span style="font-size:9px;font-weight:${isLatest ? '600' : '400'};color:${isLatest ? m.color : 'var(--text2)'}">${fmtNum(v)}</span>
+        <div style="width:100%;max-width:28px;height:36px;display:flex;align-items:flex-end">
+          <div style="width:100%;height:${pct}%;background:${m.color};opacity:${isLatest ? 0.9 : 0.4};border-radius:2px 2px 0 0"></div>
+        </div>
+        <span style="font-size:8px;color:var(--text3)">${shortYM(ym)}</span>
+      </div>`;
     }).join('');
 
-    const svgW = totalW;
-    const svgH = padTop + chartH + padBottom;
-
-    return `<div style="background:var(--bg2);border-radius:8px;padding:12px 14px">
-      <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:8px">
-        <span style="font-size:10px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px">${m.name}</span>
-        <span style="font-size:18px;font-weight:700;color:var(--text1);margin-left:auto">${s.latest.toLocaleString()}</span>
-        <span style="font-size:10px;color:${dc}">${ds} ${Math.abs(s.delta)}%</span>
+    return `<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="width:70px;flex-shrink:0">
+        <div style="font-size:10px;font-weight:600;color:var(--text2)">${m.name}</div>
+        <div style="font-size:9px;color:${dc}">${ds} ${Math.abs(s.delta)}% MoM</div>
       </div>
-      <svg viewBox="0 0 ${svgW} ${svgH}" style="width:100%;height:auto;display:block" xmlns="http://www.w3.org/2000/svg">
-        ${bars}
-      </svg>
+      <div style="flex:1;display:flex;gap:4px;align-items:flex-end">${barsHtml}</div>
+      <div style="width:55px;text-align:right;flex-shrink:0">
+        <div style="font-size:14px;font-weight:700;color:var(--text1)">${s.latest.toLocaleString()}</div>
+      </div>
     </div>`;
   }
 
@@ -5835,10 +5817,8 @@ function aaMomRender(sessionsData, eventsData) {
   const hotelLabel = aaHotelId ? (document.getElementById('aa-hotel-filter')?.selectedOptions[0]?.text || '') : 'All hotels';
 
   el.innerHTML = `
-    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">${hotelLabel} · ${deptLabel}${aaMomDept ? '' : ' · Sessions/Users not dept-filterable'}</div>
-    <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px">
-      ${metrics.map(m => barChart(m)).join('')}
-    </div>
+    <div style="font-size:9px;color:var(--text3);margin-bottom:6px">${hotelLabel} · ${deptLabel}${!aaMomDept ? ' · Sessions/Users not dept-filterable' : ''}</div>
+    <div>${metrics.map(m => chartRow(m)).join('')}</div>
   `;
 }
 
