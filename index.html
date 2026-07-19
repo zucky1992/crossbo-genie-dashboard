@@ -756,30 +756,10 @@ body.show-engg .engg-note { display: block !important; }
       </div>
     </div>
 
-    <!-- Section 1: Booking funnel headline metrics -->
-    <div style="margin-bottom:8px">
-      <div style="font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--text3);font-weight:500">Booking activity</div>
-      <div style="font-size:11px;color:var(--text3);margin-top:2px">Guests entering the booking flow · outcomes · app health</div>
-    </div>
-    <div class="kpi-row kpi-r4" id="aa-kpis" style="margin-bottom:20px"></div>
-
-    <!-- Portfolio Health section (v47) — sessions, users, per-hotel, entry sources -->
-    <div class="card" style="margin-bottom:16px" id="aa-portfolio-health">
-      <div class="card-head">
-        <div>
-          <div class="card-title">Portfolio Health</div>
-          <div class="card-sub">Sessions · users · engagement · session-to-booking conversion</div>
-        </div>
-      </div>
-      <div id="aa-portfolio-body" style="padding:0 20px 20px">
-        <div class="fu-loading"><div class="fu-spinner"></div>Loading portfolio metrics...</div>
-      </div>
-    </div>
-
-    <!-- Booking funnel hero -->
+    <!-- Booking funnel — dept breakdown only (topline metrics now in MoM trend) -->
     <div class="card" style="margin-bottom:16px">
       <div class="card-head">
-        <div><div class="card-title">Booking funnel</div><div class="card-sub" id="aa-funnel-sub">All departments · Start → Complete</div></div>
+        <div><div class="card-title">Booking by department</div><div class="card-sub" id="aa-funnel-sub">Where booking starts come from · Start → Complete</div></div>
       </div>
       <div id="aa-funnel-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
     </div>
@@ -4902,7 +4882,6 @@ async function aaLoad(force = false) {
   // v48.1: disable Refresh button to prevent double-clicks stacking requests.
   const refreshBtn = document.getElementById('aa-refresh-btn');
   if (refreshBtn) { refreshBtn.disabled = true; refreshBtn.style.opacity = '0.5'; refreshBtn.style.cursor = 'not-allowed'; refreshBtn.textContent = '↻ Loading...'; }
-  document.getElementById('aa-kpis').innerHTML = '<div class="fu-loading"><div class="fu-spinner"></div>Loading KPIs...</div>';
   document.getElementById('aa-funnel-body').innerHTML = '<div class="fu-loading"><div class="fu-spinner"></div>Loading...</div>';
 
   // Reset open depts
@@ -4991,8 +4970,6 @@ async function aaLoad(force = false) {
     aaServicesData = services;
     aaEntrySourceData = deptEntrySource;
 
-    aaRenderKPIs(funnel, screens, health);
-    aaRenderPortfolioHealth(portfolioMetrics, sessionsByHotel, funnel, screens, deptEntrySource);
     // v49: Phase 2 additions
     aaRenderSignal(md, mdPrev);
     aaRenderDeptRank(md, mdPrev);
@@ -5029,7 +5006,8 @@ async function aaLoad(force = false) {
   } catch(e) {
     console.error('AA load error:', e);
     if (statusEl) { statusEl.className = 'fu-status fu-err'; statusEl.textContent = '⚠ Error'; }
-    document.getElementById('aa-kpis').innerHTML = `<div style="font-size:11px;color:var(--red);padding:8px">⚠ ${e.message}</div>`;
+    const errEl = document.getElementById('aa-funnel-body');
+    if (errEl) errEl.innerHTML = `<div style="font-size:11px;color:var(--red);padding:8px">⚠ ${e.message}</div>`;
   } finally {
     // v48.1: always re-enable the refresh button so users can retry.
     if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.style.opacity = ''; refreshBtn.style.cursor = ''; refreshBtn.textContent = '↻ Refresh'; }
@@ -5757,8 +5735,10 @@ function aaMomRender(sessionsData, eventsData) {
     { key: 'starts', name: 'Starts', color: '#0d9488', inv: false },
     { key: 'completed', name: 'Completed', color: '#10b981', inv: false },
     { key: 'abandoned', name: 'Abandoned', color: '#ef4444', inv: true },
-    { key: 'crashes', name: 'Crashes', color: '#f59e0b', inv: true },
+    { key: 'crashes', name: 'Crashes', color: '#f59e0b', inv: true, portfolioOnly: true },
   ];
+  // Crashes can't be attributed per-hotel (app_exception lacks property). Flag when filtered.
+  const crashesUnavailable = !!aaHotelId;
 
   const deltaColor = (d, inv) => inv ? (d > 0 ? 'var(--red)' : d < 0 ? 'var(--teal)' : 'var(--text3)')
                                       : (d > 0 ? 'var(--teal)' : d < 0 ? 'var(--red)' : 'var(--text3)');
@@ -5769,6 +5749,13 @@ function aaMomRender(sessionsData, eventsData) {
   pills.innerHTML = metrics.map(m => {
     const data = series[m.key];
     const s = stat(data);
+    if (m.portfolioOnly && crashesUnavailable) {
+      return `<div style="display:flex;align-items:center;gap:5px;padding:3px 8px;background:var(--bg2);border-radius:5px;font-size:10px;opacity:0.6" title="Crashes can't be attributed to a specific hotel — app_exception events lack property attribution. View at portfolio level (All hotels).">
+        <span style="color:var(--text3)">${m.name}</span>
+        <span style="font-weight:600">n/a</span>
+        <span style="font-size:8px;color:var(--text3)">portfolio only</span>
+      </div>`;
+    }
     const values = allMonths.map(ym => data[ym] || 0);
     const max = Math.max(...values, 1);
     const pts = values.map((v, i) => {
@@ -5791,9 +5778,23 @@ function aaMomRender(sessionsData, eventsData) {
 
   const bodyRows = metrics.map(m => {
     const data = series[m.key];
+    const s = stat(data);
+
+    // Crashes unavailable when hotel filtered
+    if (m.portfolioOnly && crashesUnavailable) {
+      return `<tr style="border-bottom:1px solid var(--border);opacity:0.6">
+        <td style="padding:8px;width:80px;vertical-align:middle">
+          <div style="font-size:11px;font-weight:600;color:var(--text1)">${m.name}</div>
+        </td>
+        <td colspan="${n}" style="padding:8px;text-align:center;font-size:10px;color:var(--text3)">Not attributable per-hotel — <code>app_exception</code> events lack property. View at portfolio level.</td>
+        <td style="padding:8px;text-align:right;vertical-align:middle;width:80px">
+          <div style="font-size:15px;font-weight:700;color:var(--text3)">n/a</div>
+        </td>
+      </tr>`;
+    }
+
     const values = allMonths.map(ym => data[ym] || 0);
     const max = Math.max(...values, 1);
-    const s = stat(data);
     const dc = deltaColor(s.delta, m.inv);
 
     const barCells = values.map((v, i) => {
@@ -6197,58 +6198,33 @@ function aaRenderFunnel(data) {
   const topDepts = Object.entries(deptStarts).sort((a,b) => b[1]-a[1]).slice(0,6);
   const DEPT_NAMES = { dining:'IRD', spa:'SPA', bms_spa:'SPA (BMS)', activity:'Activity', restaurant:'Restaurant', taxi:'Taxi', housekeeping:'Housekeeping', laundry:'Laundry', store:'Store' };
 
-  // Clean horizontal funnel — no absolute positioning, no overflow
-  const steps = [
-    { label: 'Started', val: starts, pct: '100%', color: 'var(--blue)', note: '' },
-    { label: 'Abandoned', val: abandoned, pct: `${dropRate}%`, color: 'var(--amber)', note: `${dropRate}% of starters left` },
-    { label: 'Completed', val: completes, pct: `${convRate}%`, color: convRate>=20?'var(--teal)':'var(--red)', note: `${convRate}% conversion` },
-  ];
-
   document.getElementById('aa-funnel-body').innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
-      <div>
-        <div style="display:flex;gap:8px;margin-bottom:16px;align-items:flex-end;height:100px">
-          ${steps.map((s, i) => {
-            const h = Math.max(8, Math.round(s.val / starts * 90));
-            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:0">
-              <div style="width:100%;height:${h}px;background:${s.color};border-radius:3px 3px 0 0;margin-top:${90-h}px"></div>
-            </div>${i < steps.length-1 ? '<div style="flex:0 0 8px;display:flex;align-items:flex-end;padding-bottom:4px;color:var(--text3);font-size:12px">→</div>' : ''}`;
-          }).join('')}
-        </div>
-        <div style="display:flex;gap:8px">
-          ${steps.map(s => `<div style="flex:1;text-align:center">
-            <div style="font-size:13px;font-weight:600;font-family:var(--serif)">${s.val.toLocaleString()}</div>
-            <div style="font-size:9px;color:var(--text3);margin-top:2px">${s.label}</div>
-            <div style="font-size:9px;font-weight:500;color:${s.color};margin-top:1px">${s.pct}</div>
-          </div>`).join('<div style="flex:0 0 8px"></div>')}
-        </div>
-        <div style="font-size:11px;color:var(--text2);line-height:1.6;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-          ${convRate < 20 ? `⚠ <strong>${convRate}% conversion</strong> is below the 20% benchmark.` : `✓ <strong>${convRate}% conversion</strong> is above benchmark.`}
-          ${abandoned > completes ? ` More guests abandon (${abandoned.toLocaleString()}) than complete (${completes.toLocaleString()}).` : ''}
-        </div>
+    <div style="padding:0 20px 4px">
+      <div style="font-size:11px;color:var(--text2);line-height:1.6;margin-bottom:16px">
+        ${convRate < 20 ? `⚠ <strong>${convRate}% conversion</strong> is below the 20% benchmark.` : `✓ <strong>${convRate}% conversion</strong> is above benchmark.`}
+        ${abandoned > completes ? ` More guests abandon (${abandoned.toLocaleString()}) than complete (${completes.toLocaleString()}).` : ''}
+        <span style="color:var(--text3)"> · ${starts.toLocaleString()} starts → ${completes.toLocaleString()} completed → ${abandoned.toLocaleString()} abandoned</span>
       </div>
-      <div>
-        <div class="sec-lbl" style="margin-bottom:10px">Booking starts by department</div>
-        ${topDepts.map(([dept, count]) => {
-          const isNotSet = dept === '(not set)';
-          const label = isNotSet ? 'Unattributed' : (DEPT_NAMES[dept] || dept);
-          const barColor = isNotSet ? 'var(--red)' : 'var(--teal)';
-          const textColor = isNotSet ? 'color:var(--red)' : '';
-          return `<div class="fu-bar-row">
-            <div class="fu-bar-label" style="${textColor};display:flex;align-items:center;gap:6px">
-              ${isNotSet ? `<span style="font-size:8px;background:rgba(220,38,38,0.12);color:var(--red);padding:1px 5px;border-radius:8px" title="Instrumentation gap — source_module missing">gap</span>` : ''}
-              ${label}
-            </div>
-            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/starts*100)}%;background:${barColor};opacity:${isNotSet?0.5:1}"></div></div>
-            <div class="fu-bar-val" style="${textColor}">${count.toLocaleString()}</div>
-            <div class="fu-bar-pct" style="${textColor}">${Math.round(count/starts*100)}%</div>
-          </div>`;
-        }).join('')}
-        ${deptStarts['(not set)'] ? `<div class="engg-note" style="font-size:10px;color:var(--red);margin-top:10px;padding:8px;background:rgba(220,38,38,0.06);border-radius:4px;line-height:1.5">
-          <strong>⚠ ${Math.round((deptStarts['(not set)']/starts)*100)}% of booking starts (${deptStarts['(not set)'].toLocaleString()} events) have no department attribution.</strong><br>
-          Engineering needs to attach <code>source_module</code> to every booking_start event. Until fixed, dept-level conversion rates are undercounted.
-        </div>` : ''}
-      </div>
+      <div class="sec-lbl" style="margin-bottom:10px">Booking starts by department</div>
+      ${topDepts.map(([dept, count]) => {
+        const isNotSet = dept === '(not set)';
+        const label = isNotSet ? 'Unattributed' : (DEPT_NAMES[dept] || dept);
+        const barColor = isNotSet ? 'var(--red)' : 'var(--teal)';
+        const textColor = isNotSet ? 'color:var(--red)' : '';
+        return `<div class="fu-bar-row">
+          <div class="fu-bar-label" style="${textColor};display:flex;align-items:center;gap:6px">
+            ${isNotSet ? `<span style="font-size:8px;background:rgba(220,38,38,0.12);color:var(--red);padding:1px 5px;border-radius:8px" title="Instrumentation gap — source_module missing">gap</span>` : ''}
+            ${label}
+          </div>
+          <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/starts*100)}%;background:${barColor};opacity:${isNotSet?0.5:1}"></div></div>
+          <div class="fu-bar-val" style="${textColor}">${count.toLocaleString()}</div>
+          <div class="fu-bar-pct" style="${textColor}">${Math.round(count/starts*100)}%</div>
+        </div>`;
+      }).join('')}
+      ${deptStarts['(not set)'] ? `<div class="engg-note" style="font-size:10px;color:var(--red);margin-top:10px;padding:8px;background:rgba(220,38,38,0.06);border-radius:4px;line-height:1.5">
+        <strong>⚠ ${Math.round((deptStarts['(not set)']/starts)*100)}% of booking starts (${deptStarts['(not set)'].toLocaleString()} events) have no department attribution.</strong><br>
+        Engineering needs to attach <code>source_module</code> to every booking_start event. Until fixed, dept-level conversion rates are undercounted.
+      </div>` : ''}
     </div>`;
 }
 
