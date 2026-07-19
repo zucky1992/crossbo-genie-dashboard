@@ -533,6 +533,42 @@ function buildReportBody(report, startDate, endDate) {
     // Powers sparkline charts on hero KPI tiles. Returns one row per day
     // with sessions, users, engaged sessions, and screen views. Rendered
     // client-side as small line charts inside each KPI tile.
+    // ── MoM trend: sessions — monthly aggregated session metrics ────────
+    // Uses yearMonth dimension for automatic monthly grouping.
+    // Date range should be set to 12+ months for trend visibility.
+    mom_sessions: {
+      dateRanges: dateRange,
+      dimensions: [{ name: 'yearMonth' }],
+      metrics: [
+        { name: 'sessions' },
+        { name: 'totalUsers' },
+        { name: 'engagedSessions' },
+      ],
+      orderBys: [{ dimension: { dimensionName: 'yearMonth' } }],
+      limit: 24,
+    },
+
+    // ── MoM trend: events — monthly booking + crash events ──────────
+    // Includes source_module for dept filtering on the frontend.
+    mom_events: {
+      dateRanges: dateRange,
+      dimensions: [
+        { name: 'yearMonth' },
+        { name: 'eventName' },
+        { name: 'customEvent:source_module' },
+      ],
+      metrics: [{ name: 'eventCount' }],
+      dimensionFilter: {
+        orGroup: { expressions: [
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'booking_start' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'booking_complete' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'booking_abandoned' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'app_exception' } } },
+        ]}
+      },
+      limit: 2000,
+    },
+
     daily_sparkline: {
       dateRanges: dateRange,
       dimensions: [{ name: 'date' }],
