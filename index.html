@@ -4997,8 +4997,9 @@ async function aaLoad(force = false) {
     aaRenderSignal(md, mdPrev);
     aaRenderDeptRank(md, mdPrev);
 
-    // MoM trend: separate 12-month fetch (runs in parallel on first load, uses cache after)
-    aaMomFetch();
+    // MoM trend: only fetch when cache is empty (cleared by hotel/exclude-test changes)
+    if (!aaMomCache) aaMomFetch();
+    else aaMomRender(aaMomCache.sessions, aaMomCache.events);
     aaRenderHotelComparison(funnelByHotel, sessionsByHotel, health, crashesByHotel);
     aaRenderFunnel(funnel);
     aaRenderDeptPills(funnel, screens);
@@ -5671,10 +5672,10 @@ async function aaMomFetch() {
   const pills = document.getElementById('aa-mom-pills');
   const el = document.getElementById('aa-mom-body');
   if (pills) pills.innerHTML = '<span style="font-size:10px;color:var(--text3)">Loading...</span>';
-  if (el) el.innerHTML = '<div class="fu-loading"><div class="fu-spinner"></div>Loading trend data...</div>';
+  if (el && aaMomExpanded) el.innerHTML = '<div class="fu-loading"><div class="fu-spinner"></div>Loading trend data...</div>';
 
   const now = new Date();
-  let sy = now.getFullYear() - 1, sm = now.getMonth() + 1;
+  const sy = now.getFullYear() - 1, sm = now.getMonth() + 1;
   const momStart = `${sy}-${String(sm).padStart(2,'0')}-01`;
 
   let url = `${AA_FN}?multi=mom_sessions,mom_events&startDate=${momStart}&endDate=today`;
@@ -5687,6 +5688,9 @@ async function aaMomFetch() {
     const raw = await res.json();
     if (raw.error) throw new Error(raw.error);
     const md = raw.current || raw;
+    const sessRows = (md.mom_sessions || { rows: [] }).rows || [];
+    const evtRows = (md.mom_events || { rows: [] }).rows || [];
+    console.log(`[MoM] Fetched ${momStart} → today. Sessions rows: ${sessRows.length}, Events rows: ${evtRows.length}, Months: ${[...new Set(sessRows.map(r => (r.dimensionValues||[])[0]?.value))].sort().join(',')}`);
     aaMomCache = {
       sessions: md.mom_sessions || { rows: [] },
       events: md.mom_events || { rows: [] },
@@ -5695,6 +5699,7 @@ async function aaMomFetch() {
   } catch (err) {
     if (pills) pills.innerHTML = `<span style="font-size:10px;color:var(--red)">Failed: ${err.message}</span>`;
     if (el) el.innerHTML = `<div style="font-size:11px;color:var(--red);padding:12px 0">Failed to load MoM data: ${err.message}</div>`;
+    console.error('MoM fetch error:', err);
   }
 }
 
@@ -5716,28 +5721,27 @@ function aaMomRender(sessionsData, eventsData) {
 
   if (n === 0) {
     pills.innerHTML = '<span style="font-size:10px;color:var(--text3)">No monthly data available.</span>';
+    el.innerHTML = '';
     return;
   }
 
   const fmtYM = ym => `${MNAMES[parseInt(ym.slice(4))]} '${ym.slice(2,4)}`;
-  const shortYM = ym => MNAMES[parseInt(ym.slice(4))];
-  if (rangeLabel) rangeLabel.textContent = `· ${fmtYM(allMonths[0])} – ${fmtYM(allMonths[n-1])}`;
+  if (rangeLabel) rangeLabel.textContent = `· ${fmtYM(allMonths[0])} – ${fmtYM(allMonths[n-1])} · ${n}mo`;
 
   // Build series
-  const sessionsByMonth = {}, usersByMonth = {};
+  const series = { sessions: {}, users: {}, starts: {}, completed: {}, abandoned: {}, crashes: {} };
   sRows.forEach(r => {
-    sessionsByMonth[r.yearMonth] = (sessionsByMonth[r.yearMonth] || 0) + r.sessions;
-    usersByMonth[r.yearMonth] = (usersByMonth[r.yearMonth] || 0) + r.totalUsers;
+    series.sessions[r.yearMonth] = (series.sessions[r.yearMonth] || 0) + r.sessions;
+    series.users[r.yearMonth] = (series.users[r.yearMonth] || 0) + r.totalUsers;
   });
-  const startsByMonth = {}, completesByMonth = {}, abandonedByMonth = {}, crashesByMonth = {};
   eRows.forEach(r => {
     const mod = r['customEvent:source_module'] || '';
     if (aaMomDept && r.eventName !== 'app_exception' && mod !== aaMomDept) return;
     const ym = r.yearMonth;
-    if (r.eventName === 'booking_start') startsByMonth[ym] = (startsByMonth[ym] || 0) + r.eventCount;
-    if (r.eventName === 'booking_complete') completesByMonth[ym] = (completesByMonth[ym] || 0) + r.eventCount;
-    if (r.eventName === 'booking_abandoned') abandonedByMonth[ym] = (abandonedByMonth[ym] || 0) + r.eventCount;
-    if (r.eventName === 'app_exception') crashesByMonth[ym] = (crashesByMonth[ym] || 0) + r.eventCount;
+    if (r.eventName === 'booking_start') series.starts[ym] = (series.starts[ym] || 0) + r.eventCount;
+    if (r.eventName === 'booking_complete') series.completed[ym] = (series.completed[ym] || 0) + r.eventCount;
+    if (r.eventName === 'booking_abandoned') series.abandoned[ym] = (series.abandoned[ym] || 0) + r.eventCount;
+    if (r.eventName === 'app_exception') series.crashes[ym] = (series.crashes[ym] || 0) + r.eventCount;
   });
 
   function stat(data) {
@@ -5748,77 +5752,87 @@ function aaMomRender(sessionsData, eventsData) {
   }
 
   const metrics = [
-    { name: 'Sessions', data: sessionsByMonth, color: '#6366f1', inv: false },
-    { name: 'Users', data: usersByMonth, color: '#8b5cf6', inv: false },
-    { name: 'Starts', data: startsByMonth, color: '#0d9488', inv: false },
-    { name: 'Completed', data: completesByMonth, color: '#10b981', inv: false },
-    { name: 'Abandoned', data: abandonedByMonth, color: '#ef4444', inv: true },
-    { name: 'Crashes', data: crashesByMonth, color: '#f59e0b', inv: true },
+    { key: 'sessions', name: 'Sessions', color: '#6366f1', inv: false },
+    { key: 'users', name: 'Users', color: '#8b5cf6', inv: false },
+    { key: 'starts', name: 'Starts', color: '#0d9488', inv: false },
+    { key: 'completed', name: 'Completed', color: '#10b981', inv: false },
+    { key: 'abandoned', name: 'Abandoned', color: '#ef4444', inv: true },
+    { key: 'crashes', name: 'Crashes', color: '#f59e0b', inv: true },
   ];
 
-  // Pills (collapsed view)
+  const deltaColor = (d, inv) => inv ? (d > 0 ? 'var(--red)' : d < 0 ? 'var(--teal)' : 'var(--text3)')
+                                      : (d > 0 ? 'var(--teal)' : d < 0 ? 'var(--red)' : 'var(--text3)');
+  const deltaSign = d => d > 0 ? '▲' : d < 0 ? '▼' : '';
+  const fmtNum = v => v >= 10000 ? (v/1000).toFixed(1)+'k' : v >= 1000 ? (v/1000).toFixed(1)+'k' : v.toString();
+
+  // === PILLS (collapsed) ===
   pills.innerHTML = metrics.map(m => {
-    const s = stat(m.data);
-    const values = allMonths.map(ym => m.data[ym] || 0);
+    const data = series[m.key];
+    const s = stat(data);
+    const values = allMonths.map(ym => data[ym] || 0);
     const max = Math.max(...values, 1);
-    const sparkPts = values.map((v, i) => {
-      const x = n > 1 ? (i / (n - 1)) * 34 + 3 : 20;
-      const y = 11 - (v / max) * 8;
+    const pts = values.map((v, i) => {
+      const x = n > 1 ? (i/(n-1))*34+3 : 20;
+      const y = 11 - (v/max)*8;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     }).join(' ');
-    const dc = m.inv ? (s.delta > 0 ? 'var(--red)' : s.delta < 0 ? 'var(--teal)' : 'var(--text3)')
-                     : (s.delta > 0 ? 'var(--teal)' : s.delta < 0 ? 'var(--red)' : 'var(--text3)');
-    const ds = s.delta > 0 ? '▲' : s.delta < 0 ? '▼' : '';
     return `<div style="display:flex;align-items:center;gap:5px;padding:3px 8px;background:var(--bg2);border-radius:5px;font-size:10px">
-      <svg width="40" height="13" viewBox="0 0 40 13"><polyline points="${sparkPts}" fill="none" stroke="${m.color}" stroke-width="1.1" stroke-linejoin="round"/></svg>
+      <svg width="40" height="13" viewBox="0 0 40 13"><polyline points="${pts}" fill="none" stroke="${m.color}" stroke-width="1.1" stroke-linejoin="round"/></svg>
       <span style="color:var(--text3)">${m.name}</span>
       <span style="font-weight:600">${s.latest.toLocaleString()}</span>
-      <span style="font-size:8px;color:${dc}">${ds}${Math.abs(s.delta)}%</span>
+      <span style="font-size:8px;color:${deltaColor(s.delta, m.inv)}">${deltaSign(s.delta)}${Math.abs(s.delta)}%</span>
     </div>`;
   }).join('');
 
-  // Expanded view: compact table-style with inline horizontal bars
-  const fmtNum = v => v >= 10000 ? (v/1000).toFixed(1)+'k' : v >= 1000 ? (v/1000).toFixed(1)+'k' : v.toString();
+  // === EXPANDED: HTML table with bar cells ===
+  // Header row: empty + month columns + MoM column
+  const thStyle = 'padding:4px 8px;font-size:9px;letter-spacing:0.8px;text-transform:uppercase;color:var(--text3);text-align:center;font-weight:400';
+  const headerCells = allMonths.map(ym => `<th style="${thStyle}">${fmtYM(ym)}</th>`).join('');
 
-  function chartRow(m) {
-    const values = allMonths.map(ym => m.data[ym] || 0);
+  const bodyRows = metrics.map(m => {
+    const data = series[m.key];
+    const values = allMonths.map(ym => data[ym] || 0);
     const max = Math.max(...values, 1);
-    const s = stat(m.data);
-    const dc = m.inv ? (s.delta > 0 ? 'var(--red)' : s.delta < 0 ? 'var(--teal)' : 'var(--text3)')
-                     : (s.delta > 0 ? 'var(--teal)' : s.delta < 0 ? 'var(--red)' : 'var(--text3)');
-    const ds = s.delta > 0 ? '▲' : s.delta < 0 ? '▼' : '';
+    const s = stat(data);
+    const dc = deltaColor(s.delta, m.inv);
 
-    const barsHtml = allMonths.map((ym, i) => {
-      const v = values[i];
-      const pct = max > 0 ? Math.max((v / max) * 100, 2) : 2;
+    const barCells = values.map((v, i) => {
+      const pct = max > 0 ? Math.max((v/max)*100, 3) : 3;
       const isLatest = i === n - 1;
-      return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px">
-        <span style="font-size:9px;font-weight:${isLatest ? '600' : '400'};color:${isLatest ? m.color : 'var(--text2)'}">${fmtNum(v)}</span>
-        <div style="width:100%;max-width:28px;height:36px;display:flex;align-items:flex-end">
-          <div style="width:100%;height:${pct}%;background:${m.color};opacity:${isLatest ? 0.9 : 0.4};border-radius:2px 2px 0 0"></div>
+      return `<td style="padding:4px 6px;vertical-align:bottom;text-align:center">
+        <div style="font-size:10px;font-weight:${isLatest?600:400};color:${isLatest?'var(--text1)':'var(--text2)'};margin-bottom:3px">${fmtNum(v)}</div>
+        <div style="margin:0 auto;width:32px;height:40px;display:flex;align-items:flex-end">
+          <div style="width:100%;height:${pct}%;background:${m.color};opacity:${isLatest?0.85:0.35};border-radius:3px 3px 0 0;transition:height .3s"></div>
         </div>
-        <span style="font-size:8px;color:var(--text3)">${shortYM(ym)}</span>
-      </div>`;
+      </td>`;
     }).join('');
 
-    return `<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)">
-      <div style="width:70px;flex-shrink:0">
-        <div style="font-size:10px;font-weight:600;color:var(--text2)">${m.name}</div>
-        <div style="font-size:9px;color:${dc}">${ds} ${Math.abs(s.delta)}% MoM</div>
-      </div>
-      <div style="flex:1;display:flex;gap:4px;align-items:flex-end">${barsHtml}</div>
-      <div style="width:55px;text-align:right;flex-shrink:0">
-        <div style="font-size:14px;font-weight:700;color:var(--text1)">${s.latest.toLocaleString()}</div>
-      </div>
-    </div>`;
-  }
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px;width:80px;vertical-align:middle">
+        <div style="font-size:11px;font-weight:600;color:var(--text1)">${m.name}</div>
+      </td>
+      ${barCells}
+      <td style="padding:8px;text-align:right;vertical-align:middle;width:80px">
+        <div style="font-size:15px;font-weight:700;color:var(--text1)">${s.latest.toLocaleString()}</div>
+        <div style="font-size:9px;color:${dc}">${deltaSign(s.delta)} ${Math.abs(s.delta)}%</div>
+      </td>
+    </tr>`;
+  }).join('');
 
-  const deptLabel = aaMomDept ? (document.querySelector(`#aa-mom-dept-filter option[value="${aaMomDept}"]`)?.textContent || aaMomDept) : 'All depts';
-  const hotelLabel = aaHotelId ? (document.getElementById('aa-hotel-filter')?.selectedOptions[0]?.text || '') : 'All hotels';
+  const deptNote = aaMomDept ? '' : '<div style="font-size:9px;color:var(--text3);margin-top:6px">Sessions & Users not dept-filterable.</div>';
 
   el.innerHTML = `
-    <div style="font-size:9px;color:var(--text3);margin-bottom:6px">${hotelLabel} · ${deptLabel}${!aaMomDept ? ' · Sessions/Users not dept-filterable' : ''}</div>
-    <div>${metrics.map(m => chartRow(m)).join('')}</div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="border-bottom:1px solid var(--border)">
+          <th style="${thStyle};text-align:left">Metric</th>
+          ${headerCells}
+          <th style="${thStyle};text-align:right">Latest</th>
+        </tr></thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
+    </div>
+    ${deptNote}
   `;
 }
 
