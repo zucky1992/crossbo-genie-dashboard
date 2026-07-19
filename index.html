@@ -327,6 +327,8 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
 .kb-move-btn{font-size:10px;padding:5px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:transparent;color:var(--text);cursor:pointer;font-family:var(--sans);transition:all .12s}
 .kb-move-btn:hover{background:var(--bg2)}
 .kb-move-btn.active{background:var(--teal);color:#fff;border-color:var(--teal)}
+.engg-note { display: none; }
+body.show-engg .engg-note { display: block !important; }
 </style>
 </head>
 <body>
@@ -674,10 +676,9 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
   <!-- Period + Hotel filter bar -->
   <div class="fu-range-bar" style="gap:16px">
     <span style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3)">Period</span>
-    <button class="fu-range-chip on" data-start="7daysAgo" data-end="today" onclick="aaSetRange(this)">7 days</button>
-    <button class="fu-range-chip" data-start="30daysAgo" data-end="today" onclick="aaSetRange(this)">30 days</button>
-    <button class="fu-range-chip" data-start="90daysAgo" data-end="today" onclick="aaSetRange(this)">90 days</button>
-    <button class="fu-range-chip" data-start="180daysAgo" data-end="today" onclick="aaSetRange(this)">180 days</button>
+    <select id="aa-month-filter" onchange="aaSetMonth(this.value)" style="font-size:10px;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-family:var(--sans)">
+    </select>
+    <button class="fu-range-chip" data-start="7daysAgo" data-end="today" onclick="aaSetRange(this)" id="aa-7day-chip">Last 7 days</button>
     <div style="width:1px;height:20px;background:var(--border)"></div>
     <span style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3)">Hotel</span>
     <select id="aa-hotel-filter" onchange="aaSetHotel(this.value)" style="font-size:10px;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-family:var(--sans)">
@@ -696,6 +697,11 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
     <label style="font-size:10px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none" title="Filter out engineering/QA testing traffic (environment=development). Enable after ~48h of registering the dimension.">
       <input type="checkbox" id="aa-exclude-test" onchange="aaToggleExcludeTest(this.checked)" style="margin:0;accent-color:var(--teal)">
       Exclude test data
+    </label>
+    <div style="width:1px;height:20px;background:var(--border)"></div>
+    <label style="font-size:10px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none" title="Show/hide engineering instrumentation warnings throughout the dashboard">
+      <input type="checkbox" id="aa-show-engg" onchange="document.body.classList.toggle('show-engg', this.checked)" style="margin:0;accent-color:var(--amber)">
+      Engg notes
     </label>
   </div>
 
@@ -4012,7 +4018,7 @@ function renderGAInsights(){
   const sub=document.getElementById('ga-ai-sub');
   if(!el) return;
   const d=gaSelDept;
-  if(sub) sub.textContent=(d?(DEPT_LABELS[d]||d)+' dept':'All departments')+' · 90 days';
+  if(sub) sub.textContent=(d?(DEPT_LABELS[d]||d)+' dept':'All departments');
   const insights=d?{
     restaurant:[
       `🍽️ <strong>Restaurant: 288 completions</strong> from 14,224 views (2%) — but 63.9% of starters complete. Drop-off is at the browse/listing stage, not the booking form.`,
@@ -4567,8 +4573,22 @@ function fuRenderInsights(funnelData, recsData, screenData) {
    APP ANALYTICS — merged GA4 + Feature Usage
 ══════════════════════════════════════════════════════════ */
 const AA_FN = '/api/ga4';
-let aaStartDate = '7daysAgo';
-let aaEndDate = 'today';
+// Default to current month
+function aaMonthBounds(yyyy, mm) {
+  const start = `${yyyy}-${String(mm).padStart(2,'0')}-01`;
+  const lastDay = new Date(yyyy, mm, 0).getDate();
+  const today = new Date();
+  // If current month, end = today; otherwise end = last day of month
+  const isCurrentMonth = yyyy === today.getFullYear() && mm === today.getMonth() + 1;
+  const endDay = isCurrentMonth ? today.getDate() : lastDay;
+  const end = `${yyyy}-${String(mm).padStart(2,'0')}-${String(endDay).padStart(2,'0')}`;
+  return { start, end };
+}
+const _now = new Date();
+const _curBounds = aaMonthBounds(_now.getFullYear(), _now.getMonth() + 1);
+let aaStartDate = _curBounds.start;
+let aaEndDate = _curBounds.end;
+let aaIsMonthMode = true; // false when "Last 7 days" is active
 let aaHotelId = '';
 let aaExcludeTest = false; // Enable after environment dimension has data (~24-48h after registration)
 let aaCache = {};
@@ -4602,12 +4622,51 @@ const DEPT_CONFIG = {
 };
 
 function aaSetRange(el) {
-  document.querySelectorAll('.fu-range-chip').forEach(c => c.classList.remove('on'));
-  el.classList.add('on');
+  // "Last 7 days" chip — switch to rolling mode
   aaStartDate = el.dataset.start;
   aaEndDate = el.dataset.end;
+  aaIsMonthMode = false;
+  el.classList.add('on');
+  document.getElementById('aa-month-filter').value = '';
   aaCache = {}; aaLoaded = false; aaOpenDepts.clear();
   aaLoad(true);
+}
+
+function aaSetMonth(val) {
+  if (!val) return;
+  const [yyyy, mm] = val.split('-').map(Number);
+  const b = aaMonthBounds(yyyy, mm);
+  aaStartDate = b.start;
+  aaEndDate = b.end;
+  aaIsMonthMode = true;
+  // Deactivate 7-day chip
+  const chip = document.getElementById('aa-7day-chip');
+  if (chip) chip.classList.remove('on');
+  aaCache = {}; aaLoaded = false; aaOpenDepts.clear();
+  aaLoad(true);
+}
+
+// Populate month dropdown on page load
+function aaPopulateMonths() {
+  const sel = document.getElementById('aa-month-filter');
+  if (!sel) return;
+  const now = new Date();
+  const months = [];
+  // Go back to Jan 2025
+  let y = 2025, m = 1;
+  while (y < now.getFullYear() || (y === now.getFullYear() && m <= now.getMonth() + 1)) {
+    months.push({ y, m });
+    m++;
+    if (m > 12) { m = 1; y++; }
+  }
+  months.reverse(); // newest first
+  const MONTH_NAMES = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  sel.innerHTML = months.map(({ y, m }) => {
+    const val = `${y}-${m}`;
+    const label = `${MONTH_NAMES[m]} '${String(y).slice(2)}`;
+    const selected = y === now.getFullYear() && m === now.getMonth() + 1 ? ' selected' : '';
+    return `<option value="${val}"${selected}>${label}</option>`;
+  }).join('') + '<option value="">—</option>';
 }
 
 function aaSetHotel(val) {
@@ -4666,11 +4725,22 @@ function aaRows(data) {
 // '30daysAgo → today' becomes '60daysAgo → 30daysAgo'.
 // Used by aaLoad to fetch previous-period reports for delta comparison.
 function aaComputePrevRange(startDate, endDate) {
-  // GA4 supports relative dates like 'NdaysAgo' and 'today'
+  // Handle NdaysAgo → today (rolling window, e.g. "Last 7 days")
   const m = /^(\d+)daysAgo$/.exec(startDate);
-  if (!m || endDate !== 'today') return null; // only support NdaysAgo → today for now
-  const n = parseInt(m[1]);
-  return { start: `${n*2}daysAgo`, end: `${n}daysAgo` };
+  if (m && endDate === 'today') {
+    const n = parseInt(m[1]);
+    return { start: `${n*2}daysAgo`, end: `${n}daysAgo` };
+  }
+  // Handle YYYY-MM-DD month mode — previous calendar month
+  const dm = /^(\d{4})-(\d{2})-\d{2}$/.exec(startDate);
+  if (dm) {
+    let y = parseInt(dm[1]), mo = parseInt(dm[2]);
+    mo--;
+    if (mo < 1) { mo = 12; y--; }
+    const b = aaMonthBounds(y, mo);
+    return { start: b.start, end: b.end };
+  }
+  return null;
 }
 
 // Compute % delta with sign. Returns { pct, dir } where dir is 'up' | 'down' | 'flat'.
@@ -4754,6 +4824,11 @@ let aaPrevLabel = 'prev period';
 // Format a GA4 relative date ('NdaysAgo' or 'today') as a JS Date.
 function aaResolveRelativeDate(rel) {
   if (rel === 'today') return new Date();
+  // YYYY-MM-DD absolute date
+  if (/^\d{4}-\d{2}-\d{2}$/.test(rel)) {
+    const [y, m, d] = rel.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
   const m = /^(\d+)daysAgo$/.exec(rel);
   if (!m) return null;
   const d = new Date();
@@ -4772,12 +4847,19 @@ function aaBuildPrevLabel(prevStart, prevEnd) {
   const s = aaResolveRelativeDate(prevStart);
   const e = aaResolveRelativeDate(prevEnd);
   if (!s || !e) return 'prev period';
+  // If month mode (start is 1st of month), show "Jan '26" style
+  if (aaIsMonthMode && s.getDate() === 1) {
+    const MNAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return `${MNAMES[s.getMonth()]} '${String(s.getFullYear()).slice(2)}`;
+  }
   return `${aaFmtShort(s)} – ${aaFmtShort(e)}`;
 }
 
 async function aaLoad(force = false) {
   if (!force && aaLoaded) return;
   aaLoaded = true;
+  // Populate month dropdown on first load
+  if (!window._aaMonthsPopulated) { aaPopulateMonths(); window._aaMonthsPopulated = true; }
 
   const statusEl = document.getElementById('aa-status');
   if (statusEl) { statusEl.className = 'fu-status fu-warn'; statusEl.textContent = '⟳ Loading...'; }
@@ -4876,7 +4958,7 @@ async function aaLoad(force = false) {
     // v49: Phase 2 additions
     aaRenderSignal(md, mdPrev);
     aaRenderDeptRank(md, mdPrev);
-    aaRenderHotelComparison(funnelByHotel, sessionsByHotel);
+    aaRenderHotelComparison(funnelByHotel, sessionsByHotel, health);
     aaRenderFunnel(funnel);
     aaRenderDeptPills(funnel, screens);
     aaRenderRecs(recs);
@@ -4892,7 +4974,13 @@ async function aaLoad(force = false) {
     // resolution helpers we built for delta labels.
     const startD = aaResolveRelativeDate(aaStartDate);
     const endD = aaResolveRelativeDate(aaEndDate);
-    const dateRange = (startD && endD) ? `${aaFmtShort(startD)} – ${aaFmtShort(endD)}, ${endD.getFullYear()}` : `${aaStartDate} → ${aaEndDate}`;
+    let dateRange;
+    if (aaIsMonthMode && startD) {
+      const MNAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      dateRange = `${MNAMES[startD.getMonth()]} ${startD.getFullYear()}`;
+    } else {
+      dateRange = (startD && endD) ? `${aaFmtShort(startD)} – ${aaFmtShort(endD)}, ${endD.getFullYear()}` : `${aaStartDate} → ${aaEndDate}`;
+    }
     if (subEl) subEl.textContent = `Live from GA4 · orascom-ohm1 · ${dateRange}${aaHotelId ? ' · ' + (document.getElementById('aa-hotel-filter')?.selectedOptions[0]?.text || '') : ''}`;
     if (statusEl) { statusEl.className = 'fu-status fu-ok'; statusEl.textContent = '● GA4 Data'; }
 
@@ -4992,8 +5080,8 @@ function aaComputeSignals(curr, prev) {
   });
 
   // Rule 4: app crash spike (±30%)
-  const cCrash = aaRows(curr.app_health || { rows: [] }).find(r => r.eventName === 'app_exception')?.eventCount || 0;
-  const pCrash = aaRows(prev.app_health || { rows: [] }).find(r => r.eventName === 'app_exception')?.eventCount || 0;
+  const cCrash = aaRows(curr.app_health || { rows: [] }).filter(r => r.eventName === 'app_exception').reduce((a, r) => a + r.eventCount, 0);
+  const pCrash = aaRows(prev.app_health || { rows: [] }).filter(r => r.eventName === 'app_exception').reduce((a, r) => a + r.eventCount, 0);
   if (pCrash > 0) {
     const pct = Math.round((cCrash - pCrash) / pCrash * 100);
     if (Math.abs(pct) >= 30) {
@@ -5062,7 +5150,7 @@ function aaRenderSignal(curr, prev) {
   const signals = aaComputeSignals(curr, prev);
 
   if (!prev) {
-    el.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:4px 0">Signal generator needs a previous-period comparison. Use a preset period (7 / 30 / 90 / 180 days).</div>`;
+    el.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:4px 0">Signal generator needs a previous-period comparison. Select a month or use "Last 7 days".</div>`;
     return;
   }
 
@@ -5268,10 +5356,17 @@ function aaCanonicalHotel(name) {
   if (n.includes('ali pasha')) return 'Ali Pasha';
   if (n.includes('fanadir')) return 'Fanadir';
   if (n.includes("turtle's inn") || n.includes("turtles inn")) return "Turtle's Inn";
-  return null; // Unknown hotel — filter out
+  // Partially live / cross-project properties
+  if (n.includes('club paradisio')) return 'Club Paradisio';
+  if (n === 'envi' || n.includes('envi ')) return 'ENVI';
+  if (n === 'paje' || n.includes('paje ')) return 'PAJE';
+  if (n.includes('zanzibar') || n.includes('beach lodge')) return 'Zanzibar Beach Lodge';
+  if (n.includes('andermatt')) return 'The Chedi Andermatt';
+  if (n === 'hotel') return null; // Generic "Hotel" value — likely misconfigured, skip
+  return null;
 }
 
-function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
+function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData, healthData) {
   const el = document.getElementById('aa-hotel-compare-body');
   if (!el) return;
 
@@ -5289,6 +5384,7 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
 
   const fRows = aaRows(funnelByHotelData);
   const sRows = aaRows(sessionsByHotelData);
+  const hRows = healthData ? aaRows(healthData) : [];
 
   const hotels = {};
   const hotelDepts = {};
@@ -5296,7 +5392,7 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
     const raw = r['customUser:property'];
     const name = aaCanonicalHotel(raw);
     if (!name) return;
-    hotels[name] = hotels[name] || { starts: 0, completes: 0, abandoned: 0, sessions: 0, users: 0 };
+    hotels[name] = hotels[name] || { starts: 0, completes: 0, abandoned: 0, sessions: 0, users: 0, crashes: 0 };
     if (r.eventName === 'booking_start') hotels[name].starts += r.eventCount;
     if (r.eventName === 'booking_complete') hotels[name].completes += r.eventCount;
     if (r.eventName === 'booking_abandoned') hotels[name].abandoned += r.eventCount;
@@ -5311,6 +5407,15 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
     }
   });
 
+  // Merge crashes per hotel from app_health
+  hRows.forEach(r => {
+    if (r.eventName !== 'app_exception') return;
+    const raw = r['customUser:property'];
+    const name = aaCanonicalHotel(raw);
+    if (!name || !hotels[name]) return;
+    hotels[name].crashes += r.eventCount;
+  });
+
   sRows.forEach(r => {
     const raw = r['customUser:property'];
     const name = aaCanonicalHotel(raw);
@@ -5322,10 +5427,11 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
   const hotelList = Object.entries(hotels)
     .map(([name, h]) => ({
       name,
-      starts: h.starts, completes: h.completes, abandoned: h.abandoned,
+      starts: h.starts, completes: h.completes, abandoned: h.abandoned, crashes: h.crashes,
       conv: h.starts > 0 ? Math.round(h.completes / h.starts * 100) : 0,
       sessions: h.sessions, users: h.users,
       startRate: h.sessions > 0 ? Math.round(h.starts / h.sessions * 100) : 0,
+      crashRate: h.sessions > 0 ? (h.crashes / h.sessions * 100).toFixed(1) : '0.0',
     }))
     .filter(h => h.starts > 0 || h.sessions > 10)
     .sort((a, b) => b.starts - a.starts);
@@ -5335,11 +5441,24 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
     return;
   }
 
+  // Sortable state
+  if (!window._aaHotelSort) window._aaHotelSort = { col: 'starts', dir: 'desc' };
+
+  const { col: sortCol, dir: sortDir } = window._aaHotelSort;
+  hotelList.sort((a, b) => {
+    let va = a[sortCol], vb = b[sortCol];
+    if (sortCol === 'crashRate') { va = parseFloat(va); vb = parseFloat(vb); }
+    if (typeof va === 'string') return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+    return sortDir === 'asc' ? va - vb : vb - va;
+  });
+
   const totStarts = hotelList.reduce((a, h) => a + h.starts, 0);
   const totCompletes = hotelList.reduce((a, h) => a + h.completes, 0);
   const totSessions = hotelList.reduce((a, h) => a + h.sessions, 0);
+  const totCrashes = hotelList.reduce((a, h) => a + h.crashes, 0);
   const avgConv = totStarts > 0 ? Math.round(totCompletes / totStarts * 100) : 0;
   const avgStartRate = totSessions > 0 ? Math.round(totStarts / totSessions * 100) : 0;
+  const avgCrashRate = totSessions > 0 ? (totCrashes / totSessions * 100).toFixed(1) : '0.0';
 
   const outlierColor = (val, avg, threshold = 3) => {
     if (val >= avg + threshold) return 'var(--teal)';
@@ -5349,11 +5468,20 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
 
   const hotelDomId = (name) => 'hc-' + name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
 
+  // Sortable header helper
+  const thStyle = 'text-align:right;padding:8px 10px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border);cursor:pointer;user-select:none;white-space:nowrap';
+  const sortIcon = (col) => {
+    if (window._aaHotelSort.col !== col) return '<span style="opacity:.3">⇅</span>';
+    return window._aaHotelSort.dir === 'asc' ? '▲' : '▼';
+  };
+  const th = (col, label, align) => `<th style="${align === 'left' ? thStyle.replace('text-align:right','text-align:left') : thStyle}" onclick="aaHotelSortToggle('${col}')">${label} ${sortIcon(col)}</th>`;
+
   const rowsHTML = hotelList.map(h => {
     const convColor = outlierColor(h.conv, avgConv);
     const startRateColor = outlierColor(h.startRate, avgStartRate, 2);
+    const crashColor = parseFloat(h.crashRate) > parseFloat(avgCrashRate) * 1.5 ? 'var(--red)' : 'var(--text1)';
     const convWarning = h.conv === 0 && h.starts >= 20 ? ' <span title="0% conversion — possible tracking gap" style="cursor:help">⚠️</span>' : '';
-    const startsBar = totStarts > 0 ? Math.round(h.starts / hotelList[0].starts * 100) : 0;
+    const startsBar = hotelList[0].starts > 0 ? Math.round(h.starts / hotelList[0].starts * 100) : 0;
     const hid = hotelDomId(h.name);
     const depts = hotelDepts[h.name] || {};
     const hasDepts = Object.keys(depts).length > 0;
@@ -5380,7 +5508,7 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
         </tr>`;
       }).join('');
 
-      drilldownHTML = `<tr id="${hid}-detail" style="display:none"><td colspan="7" style="padding:0;background:color-mix(in srgb, var(--bg2) 60%, transparent)">
+      drilldownHTML = `<tr id="${hid}-detail" style="display:none"><td colspan="9" style="padding:0;background:color-mix(in srgb, var(--bg2) 60%, transparent)">
         <table style="width:100%;border-collapse:collapse">
           <thead><tr>
             <th style="text-align:left;padding:6px 10px 6px 28px;font-size:9px;letter-spacing:0.8px;text-transform:uppercase;color:var(--text3)">Dept</th>
@@ -5407,6 +5535,8 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
       <td style="padding:10px;text-align:right;font-weight:600;color:${convColor}">${h.conv}%${convWarning}</td>
       <td style="padding:10px;text-align:right;color:${startRateColor}">${h.startRate}%</td>
       <td style="padding:10px;text-align:right;color:var(--red)">${h.abandoned.toLocaleString()}</td>
+      <td style="padding:10px;text-align:right;color:${crashColor}">${h.crashes.toLocaleString()}</td>
+      <td style="padding:10px;text-align:right;font-size:11px;color:${crashColor}">${h.crashRate}%</td>
     </tr>${drilldownHTML}`;
   }).join('');
 
@@ -5415,18 +5545,20 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
 
   el.innerHTML = `
     <div style="font-size:11px;color:var(--text3);margin-bottom:8px">
-      Portfolio avg conversion: <strong>${avgConv}%</strong> · Avg booking intent: <strong>${avgStartRate}%</strong> · Click a hotel row to see its dept breakdown.
+      Portfolio avg conversion: <strong>${avgConv}%</strong> · Avg intent: <strong>${avgStartRate}%</strong> · Avg crash rate: <strong>${avgCrashRate}%</strong> · Click headers to sort, rows to drill down.
     </div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:12px">
         <thead><tr>
-          <th style="text-align:left;padding:8px 10px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)">Hotel</th>
-          <th style="text-align:right;padding:8px 10px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)">Sessions</th>
-          <th style="text-align:right;padding:8px 10px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)">Starts</th>
-          <th style="text-align:right;padding:8px 10px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)">Completes</th>
-          <th style="text-align:right;padding:8px 10px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)">Conv %</th>
-          <th style="text-align:right;padding:8px 10px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)">Intent %</th>
-          <th style="text-align:right;padding:8px 10px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)">Lost</th>
+          ${th('name', 'Hotel', 'left')}
+          ${th('sessions', 'Sessions')}
+          ${th('starts', 'Starts')}
+          ${th('completes', 'Compl.')}
+          ${th('conv', 'Conv %')}
+          ${th('startRate', 'Intent %')}
+          ${th('abandoned', 'Lost')}
+          ${th('crashes', 'Crashes')}
+          ${th('crashRate', 'Crash %')}
         </tr></thead>
         <tbody>${rowsHTML}</tbody>
         <tfoot><tr style="border-top:2px solid var(--border);font-weight:600;font-size:11px;color:var(--text3)">
@@ -5437,10 +5569,27 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData) {
           <td style="padding:10px;text-align:right">${totConv}%</td>
           <td style="padding:10px;text-align:right">${avgStartRate}%</td>
           <td style="padding:10px;text-align:right">${totAbandoned.toLocaleString()}</td>
+          <td style="padding:10px;text-align:right">${totCrashes.toLocaleString()}</td>
+          <td style="padding:10px;text-align:right">${avgCrashRate}%</td>
         </tr></tfoot>
       </table>
     </div>
   `;
+}
+
+function aaHotelSortToggle(col) {
+  if (window._aaHotelSort.col === col) {
+    window._aaHotelSort.dir = window._aaHotelSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    window._aaHotelSort.col = col;
+    window._aaHotelSort.dir = col === 'name' ? 'asc' : 'desc';
+  }
+  // Re-render using cached data
+  const ck = (k) => `${aaHotelId || 'all'}_${aaStartDate}_${k}`;
+  const f = aaCache[ck('booking_funnel_by_hotel')] || { rows: [] };
+  const s = aaCache[ck('sessions_by_hotel')] || { rows: [] };
+  const h = aaCache[ck('app_health')] || { rows: [] };
+  aaRenderHotelComparison(f, s, h);
 }
 
 function aaToggleHotelDetail(hid) {
@@ -5460,7 +5609,7 @@ function aaRenderKPIs(funnelData, screensData, healthData) {
   const convRate = starts > 0 ? Math.round(completes / starts * 100) : 0;
   const dropRate = starts > 0 ? Math.round(abandoned / starts * 100) : 0;
   const hRows = healthData ? aaRows(healthData) : [];
-  const crashes = hRows.find(r => r.eventName === 'app_exception')?.eventCount || 0;
+  const crashes = hRows.filter(r => r.eventName === 'app_exception').reduce((a, r) => a + r.eventCount, 0);
 
   // v48: previous-period values for delta pills. If aaPrevData is null
   // (period doesn't support prev, e.g. custom date), we skip deltas cleanly.
@@ -5474,7 +5623,7 @@ function aaRenderKPIs(funnelData, screensData, healthData) {
     prevConvRate = prevStarts > 0 ? Math.round(prevCompletes / prevStarts * 100) : 0;
     prevDropRate = prevStarts > 0 ? Math.round(prevAbandoned / prevStarts * 100) : 0;
     const pHealth = aaRows(aaPrevData.app_health || { rows: [] });
-    prevCrashes = pHealth.find(r => r.eventName === 'app_exception')?.eventCount || 0;
+    prevCrashes = pHealth.filter(r => r.eventName === 'app_exception').reduce((a, r) => a + r.eventCount, 0);
   }
 
   // Sparklines from daily_events_sparkline
@@ -5567,6 +5716,13 @@ const VALID_HOTEL_NAMES = new Set([
   'Fanadir',
   "Turtle's Inn",
   'Turtle\u2019s Inn',
+  // Partially live / cross-project properties
+  'Club Paradisio El Gouna',
+  'Club Paradisio',
+  'ENVI',
+  'PAJE',
+  'Zanzibar Beach Lodge',
+  'The Chedi Andermatt',
 ]);
 
 function aaRenderPortfolioHealth(metricsData, sessionsData, funnelData, screensData, entrySourceData) {
@@ -5756,11 +5912,11 @@ function aaRenderPortfolioHealth(metricsData, sessionsData, funnelData, screensD
           <strong>Low activity (< ${LOW_ACTIVITY_THRESHOLD} sessions):</strong>
           ${lowHotels.map(h => `${h.hotel} <span style="color:var(--text3)">(${h.sessions})</span>`).join(' · ')}
         </div>` : ''}
-        ${notSetSessions > 0 ? `<div style="margin-top:8px;font-size:10px;color:var(--text3)">Plus ${notSetSessions.toLocaleString()} sessions with no property attributed. Engineering must populate the <code>property</code> user-property on every session for full coverage.</div>` : ''}
-        ${junkSessions > 0 ? `<div style="margin-top:8px;background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:8px 10px;font-size:10px;color:var(--amber-d)">⚠ <strong>${junkSessions.toLocaleString()} sessions</strong> attributed to unrecognized properties: ${junkValues.slice(0, 5).map(v => `<code>${v}</code>`).join(', ')}${junkValues.length > 5 ? ` +${junkValues.length - 5} more` : ''}. Either test data, cross-project bleed, or misconfigured <code>property</code> values. Engineering ticket.</div>` : ''}
+        ${notSetSessions > 0 ? `<div class="engg-note" style="margin-top:8px;font-size:10px;color:var(--text3)">Plus ${notSetSessions.toLocaleString()} sessions with no property attributed. Engineering must populate the <code>property</code> user-property on every session for full coverage.</div>` : ''}
+        ${junkSessions > 0 ? `<div class="engg-note" style="margin-top:8px;background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:8px 10px;font-size:10px;color:var(--amber-d)">⚠ <strong>${junkSessions.toLocaleString()} sessions</strong> attributed to unrecognized properties: ${junkValues.slice(0, 5).map(v => `<code>${v}</code>`).join(', ')}${junkValues.length > 5 ? ` +${junkValues.length - 5} more` : ''}. Either test data, cross-project bleed, or misconfigured <code>property</code> values. Engineering ticket.</div>` : ''}
       </div>`;
     } else if (sRows.length > 0) {
-      html += `<div style="margin-bottom:24px;background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:12px;font-size:11px;color:var(--amber-d)">
+      html += `<div class="engg-note" style="margin-bottom:24px;background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:12px;font-size:11px;color:var(--amber-d)">
         ⚠ <strong>Sessions per hotel: instrumentation gap.</strong> ${sRows.reduce((a,r)=>a+parseInt(r.sessions||0),0).toLocaleString()} sessions found but hotel property dimension is empty or contains only unrecognized values. The <code>property</code> user-property was registered but may not be populated on all events yet.
       </div>`;
     }
@@ -5780,7 +5936,7 @@ function aaRenderPortfolioHealth(metricsData, sessionsData, funnelData, screensD
       <div style="margin-top:8px;font-size:10px;color:var(--text3)">${totalWithSource.toLocaleString()} of ${totalBookingStarts.toLocaleString()} booking_start events (${Math.round(totalWithSource/totalBookingStarts*100)}%) have source_screen populated.</div>
     </div>`;
   } else if (totalBookingStarts > 0) {
-    html += `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:12px;font-size:11px;color:var(--amber-d)">
+    html += `<div class="engg-note" style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:12px;font-size:11px;color:var(--amber-d)">
       ⚠ <strong>Entry paths: instrumentation gap.</strong> ${totalBookingStarts.toLocaleString()} booking_start events fired but <code>source_screen</code> is not populated. Engineering needs to attach source_screen (where user came from: home_widget, nav_bar, spotlight, deep_link, etc.) to booking_start events to enable this analysis.
     </div>`;
   }
@@ -5853,7 +6009,7 @@ function aaRenderFunnel(data) {
             <div class="fu-bar-pct" style="${textColor}">${Math.round(count/starts*100)}%</div>
           </div>`;
         }).join('')}
-        ${deptStarts['(not set)'] ? `<div style="font-size:10px;color:var(--red);margin-top:10px;padding:8px;background:rgba(220,38,38,0.06);border-radius:4px;line-height:1.5">
+        ${deptStarts['(not set)'] ? `<div class="engg-note" style="font-size:10px;color:var(--red);margin-top:10px;padding:8px;background:rgba(220,38,38,0.06);border-radius:4px;line-height:1.5">
           <strong>⚠ ${Math.round((deptStarts['(not set)']/starts)*100)}% of booking starts (${deptStarts['(not set)'].toLocaleString()} events) have no department attribution.</strong><br>
           Engineering needs to attach <code>source_module</code> to every booking_start event. Until fixed, dept-level conversion rates are undercounted.
         </div>` : ''}
@@ -6075,7 +6231,7 @@ async function aaRenderDeptBody(dept, rows, cfg) {
             </div>`).join('')}
         </div>`;
       } else if (entryTotal > 0 && !entryHasSource) {
-        richHTML += `<div style="margin-bottom:16px;background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;font-size:11px;color:var(--amber-d)">
+        richHTML += `<div class="engg-note" style="margin-bottom:16px;background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;font-size:11px;color:var(--amber-d)">
           ⚠ <strong>Entry source: instrumentation gap.</strong> ${entryTotal.toLocaleString()} booking_start events fired for this dept but <code>source_screen</code> is empty. Engineering needs to attach source_screen to booking events to enable per-dept entry analysis.
         </div>`;
       }
@@ -6130,7 +6286,7 @@ async function aaRenderDeptBody(dept, rows, cfg) {
             </div>`).join('')}
         </div>`;
       } else if (showCompletedGap) {
-        richHTML += `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;font-size:11px;color:var(--amber-d)">
+        richHTML += `<div class="engg-note" style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;font-size:11px;color:var(--amber-d)">
           ⚠ <strong>Items completed: instrumentation gap</strong><br>
           ${totalCompletes} booking_complete events fired but <code>service</code> field is missing. Engineering must attach item name to booking_complete events for this dept.
         </div>`;
@@ -6149,7 +6305,7 @@ async function aaRenderDeptBody(dept, rows, cfg) {
             </div>`).join('')}
         </div>`;
       } else if (showAbandonedGap) {
-        richHTML += `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;font-size:11px;color:var(--amber-d)">
+        richHTML += `<div class="engg-note" style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;font-size:11px;color:var(--amber-d)">
           ⚠ <strong>Items abandoned: instrumentation gap</strong><br>
           ${totalAbandons} booking_abandoned events fired but <code>service</code> field is missing. Engineering must attach item name to booking_abandoned events for this dept.
         </div>`;
@@ -6492,7 +6648,7 @@ function aaRenderAppHealth(data, screensData) {
   const el = document.getElementById('aa-health-body');
   if (!el) return;
   const rows = aaRows(data);
-  const get = name => rows.find(r => r.eventName === name)?.eventCount || 0;
+  const get = name => rows.filter(r => r.eventName === name).reduce((a, r) => a + r.eventCount, 0);
   const crashes = get('app_exception');
   const uninstalls = get('app_remove');
   const installs = get('first_open');

@@ -396,7 +396,10 @@ function buildReportBody(report, startDate, endDate) {
     // ── App health ────────────────────────────────────────────────────
     app_health: {
       dateRanges: dateRange,
-      dimensions: [{ name: 'eventName' }],
+      dimensions: [
+        { name: 'eventName' },
+        { name: 'customUser:property' },
+      ],
       metrics: [{ name: 'eventCount' }],
       dimensionFilter: {
         orGroup: { expressions: [
