@@ -793,6 +793,22 @@ body.show-engg .engg-note { display: block !important; }
     <!-- Section 2: Department cards -->
     <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px">By department · drill down</div>
 
+    <div class="aa-dept-card card" id="aa-dept-home" style="margin-bottom:16px">
+      <div class="aa-dept-head" onclick="aaToggleDept('home')">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:18px">🏠</span>
+          <div><div style="font-size:12px;font-weight:500">Home Screen</div><div class="card-sub">Spotlight · Quick actions · Navigation</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="aa-pill-home"></div>
+          <svg class="aa-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
+        </div>
+      </div>
+      <div class="aa-dept-body" id="aa-body-home" style="display:none;padding-top:14px;border-top:1px solid var(--border);margin-top:12px">
+        <div class="fu-loading"><div class="fu-spinner"></div>Loading Home data...</div>
+      </div>
+    </div>
+
     <!-- IRD -->
     <div class="aa-dept-card card" id="aa-dept-ird" style="margin-bottom:10px">
       <div class="aa-dept-head" onclick="aaToggleDept('ird')">
@@ -930,21 +946,6 @@ body.show-engg .engg-note { display: block !important; }
     </div>
 
     <!-- Home screen -->
-    <div class="aa-dept-card card" id="aa-dept-home" style="margin-bottom:16px">
-      <div class="aa-dept-head" onclick="aaToggleDept('home')">
-        <div style="display:flex;align-items:center;gap:10px">
-          <span style="font-size:18px">🏠</span>
-          <div><div style="font-size:12px;font-weight:500">Home Screen</div><div class="card-sub">Spotlight · Quick actions · Navigation</div></div>
-        </div>
-        <div style="display:flex;align-items:center;gap:10px">
-          <div id="aa-pill-home"></div>
-          <svg class="aa-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
-        </div>
-      </div>
-      <div class="aa-dept-body" id="aa-body-home" style="display:none;padding-top:14px;border-top:1px solid var(--border);margin-top:12px">
-        <div class="fu-loading"><div class="fu-spinner"></div>Loading Home data...</div>
-      </div>
-    </div>
 
     <!-- Section 3: Recommendations carousel -->
     <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px;margin-top:6px">Carousel performance</div>
@@ -5240,7 +5241,9 @@ function aaComputeDeptRankRows(curr, prev) {
   const p = byDept(rowsPrev);
   // Track whether prev had ANY dept-level source_module data
   const prevHasDeptData = Object.keys(p).length > 0;
-  return Object.keys(c).map(mod => {
+  return Object.keys(c)
+    .filter(mod => c[mod].starts > 0) // exclude modules with no booking_starts (e.g. stray complete/abandon events)
+    .map(mod => {
     const cur = c[mod];
     const prv = p[mod] || { starts: 0, completes: 0, abandoned: 0 };
     const conv = cur.starts > 0 ? Math.round(cur.completes / cur.starts * 100) : 0;
@@ -5528,6 +5531,17 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData, healthD
         </tr>`;
       }).join('');
 
+      // Reconciliation: hotel total vs sum of attributed depts
+      const deptStartsSum = deptList.reduce((a, d) => a + d.starts, 0);
+      const unattributed = h.starts - deptStartsSum;
+      const unattribRow = unattributed > 0 ? `<tr style="border-bottom:1px solid color-mix(in srgb, var(--border) 50%, transparent);opacity:0.7">
+          <td style="padding:6px 10px 6px 28px;font-size:11px;color:var(--red)"><span style="font-size:8px;background:rgba(220,38,38,0.12);color:var(--red);padding:1px 5px;border-radius:8px;margin-right:4px">gap</span>Unattributed</td>
+          <td style="padding:6px 10px;text-align:right;font-size:11px;color:var(--red)">${unattributed.toLocaleString()}</td>
+          <td style="padding:6px 10px;text-align:right;font-size:11px;color:var(--text3)">—</td>
+          <td style="padding:6px 10px;text-align:right;font-size:11px;color:var(--text3)">—</td>
+          <td style="padding:6px 10px;text-align:right;font-size:11px;color:var(--text3)">—</td>
+        </tr>` : '';
+
       drilldownHTML = `<tr id="${hid}-detail" style="display:none"><td colspan="9" style="padding:0;background:color-mix(in srgb, var(--bg2) 60%, transparent)">
         <table style="width:100%;border-collapse:collapse">
           <thead><tr>
@@ -5537,7 +5551,7 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData, healthD
             <th style="text-align:right;padding:6px 10px;font-size:9px;letter-spacing:0.8px;text-transform:uppercase;color:var(--text3)">Conv</th>
             <th style="text-align:right;padding:6px 10px;font-size:9px;letter-spacing:0.8px;text-transform:uppercase;color:var(--text3)">Lost</th>
           </tr></thead>
-          <tbody>${deptRows}</tbody>
+          <tbody>${deptRows}${unattribRow}</tbody>
         </table>
       </td></tr>`;
     }
@@ -6380,35 +6394,6 @@ async function aaRenderDeptBody(dept, rows, cfg) {
       </div>`).join('')}
     </div>`;
 
-    // Drop-off by step
-    if (topSteps.length > 0) {
-      const maxStep = topSteps[0][1];
-      richHTML += `<div style="margin-bottom:16px">
-        <div class="sec-lbl" style="margin-bottom:8px">Where guests abandon · booking step</div>
-        ${topSteps.map(([step, count]) => `
-          <div class="fu-bar-row">
-            <div class="fu-bar-label" style="font-size:11px">${step}</div>
-            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/maxStep*100)}%;background:var(--amber)"></div></div>
-            <div class="fu-bar-val">${count.toLocaleString()}</div>
-            <div class="fu-bar-pct">${totalAbandons>0?Math.round(count/totalAbandons*100):0}%</div>
-          </div>`).join('')}
-      </div>`;
-    }
-
-    // Top services
-    if (topSvcs.length > 0) {
-      const maxSvc = topSvcs[0][1];
-      richHTML += `<div style="margin-bottom:16px">
-        <div class="sec-lbl" style="margin-bottom:8px">Top services booked</div>
-        ${topSvcs.map(([svc, count]) => `
-          <div class="fu-bar-row">
-            <div class="fu-bar-label" style="font-size:11px">${svc}</div>
-            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/maxSvc*100)}%;background:var(--teal)"></div></div>
-            <div class="fu-bar-val">${count.toLocaleString()}</div>
-          </div>`).join('')}
-      </div>`;
-    }
-
     // ── Entry source · where guests enter this dept from ─────────────
     // Uses dept_entry_source report. Filters to this dept's source_module,
     // groups by source_screen. If source_screen is (not set), surfaces the
@@ -6447,6 +6432,37 @@ async function aaRenderDeptBody(dept, rows, cfg) {
         </div>`;
       }
     }
+
+
+    // Drop-off by step
+    if (topSteps.length > 0) {
+      const maxStep = topSteps[0][1];
+      richHTML += `<div style="margin-bottom:16px">
+        <div class="sec-lbl" style="margin-bottom:8px">Where guests abandon · booking step</div>
+        ${topSteps.map(([step, count]) => `
+          <div class="fu-bar-row">
+            <div class="fu-bar-label" style="font-size:11px">${step}</div>
+            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/maxStep*100)}%;background:var(--amber)"></div></div>
+            <div class="fu-bar-val">${count.toLocaleString()}</div>
+            <div class="fu-bar-pct">${totalAbandons>0?Math.round(count/totalAbandons*100):0}%</div>
+          </div>`).join('')}
+      </div>`;
+    }
+
+    // Top services
+    if (topSvcs.length > 0) {
+      const maxSvc = topSvcs[0][1];
+      richHTML += `<div style="margin-bottom:16px">
+        <div class="sec-lbl" style="margin-bottom:8px">Top services booked</div>
+        ${topSvcs.map(([svc, count]) => `
+          <div class="fu-bar-row">
+            <div class="fu-bar-label" style="font-size:11px">${svc}</div>
+            <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/maxSvc*100)}%;background:var(--teal)"></div></div>
+            <div class="fu-bar-val">${count.toLocaleString()}</div>
+          </div>`).join('')}
+      </div>`;
+    }
+
 
     // ── Items completed vs abandoned ─────────────────────────────────
     // Aggregates booking_complete_detail and abandon_detail by service name.
