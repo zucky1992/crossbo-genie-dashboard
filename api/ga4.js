@@ -67,7 +67,7 @@ function clickFilter(module, screen) {
     if (mods.length === 1) expressions.push({ filter: { fieldName: 'customEvent:source_module', stringFilter: { value: mods[0] } } });
     else expressions.push({ orGroup: { expressions: mods.map(m => ({ filter: { fieldName: 'customEvent:source_module', stringFilter: { value: m } } })) } });
   }
-  if (screen) expressions.push({ filter: { fieldName: 'customEvent:source_screen', stringFilter: { value: screen } } });
+  if (screen) expressions.push({ filter: { fieldName: 'customEvent:entry_point', stringFilter: { value: screen } } });
   return expressions.length === 1 ? expressions[0] : { andGroup: { expressions } };
 }
 
@@ -76,7 +76,7 @@ function buildReportBody(report, startDate, endDate) {
   const clickDims = [
     { name: 'customEvent:label' },
     { name: 'customEvent:value' },
-    { name: 'customEvent:source_screen' },
+    { name: 'customEvent:entry_point' },
     { name: 'customEvent:source_module' },
   ];
 
@@ -346,7 +346,7 @@ function buildReportBody(report, startDate, endDate) {
       dimensionFilter: {
         andGroup: { expressions: [
           { filter: { fieldName: 'eventName', stringFilter: { value: 'click_event' } } },
-          { filter: { fieldName: 'customEvent:source_screen', stringFilter: { value: 'chat' } } },
+          { filter: { fieldName: 'customEvent:entry_point', stringFilter: { value: 'chat' } } },
         ]}
       },
       orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
@@ -514,13 +514,13 @@ function buildReportBody(report, startDate, endDate) {
     },
 
     // ── Department entry source — where guests enter each dept from ────
-    // source_screen tells us: home widget, nav bar, deep link, etc.
-    // If source_screen is (not set), it's an instrumentation gap.
+    // entry_point tells us: home widget, nav bar, deep link, etc.
+    // Renamed from source_screen by engineering (Aug 2026).
     dept_entry_source: {
       dateRanges: dateRange,
       dimensions: [
         { name: 'customEvent:source_module' },
-        { name: 'customEvent:source_screen' },
+        { name: 'customEvent:entry_point' },
       ],
       metrics: [{ name: 'eventCount' }],
       dimensionFilter: {

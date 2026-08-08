@@ -721,6 +721,7 @@ body.show-engg .engg-note { display: block !important; }
           </div>
         </div>
         <div style="margin-left:auto;display:flex;align-items:center;gap:8px" onclick="event.stopPropagation()">
+          <button onclick="aaMomRetry()" title="Reload trend data" style="font-size:10px;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text2);cursor:pointer;font-family:var(--sans)">↻</button>
           <span style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Dept</span>
           <select id="aa-mom-dept-filter" onchange="aaMomDeptChange(this.value)" style="font-size:10px;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-family:var(--sans)">
             <option value="">All departments</option>
@@ -992,7 +993,7 @@ body.show-engg .engg-note { display: block !important; }
           <thead><tr><th>Missing / broken</th><th>Dept</th><th>Impact</th><th>Priority</th></tr></thead>
           <tbody>
             <tr><td>source_module on booking events</td><td>All</td><td>Can't split funnel by dept — ~50% shows (not set)</td><td><span class="pill pr">Critical</span></td></tr>
-            <tr><td>source_screen on booking events</td><td>All</td><td>Can't see where guests enter each dept from (widget, nav, deep link)</td><td><span class="pill pr">Critical</span></td></tr>
+            <tr><td>entry_point on booking events</td><td>All</td><td>Can't see where guests enter each dept from (widget, nav, deep link)</td><td><span class="pill pr">Critical</span></td></tr>
             <tr><td>service field on booking_complete / booking_abandoned</td><td>Store</td><td>Can't see which items are ordered or abandoned in cart</td><td><span class="pill pr">High</span></td></tr>
             <tr><td>property user-property populated on all sessions</td><td>All</td><td>~22% of sessions have no hotel attribution</td><td><span class="pill pr">High</span></td></tr>
             <tr><td>Cross-project data bleed ("Hotel", "ENVI PAJE Zanzibar")</td><td>All</td><td>Unknown properties polluting GA4 — audit needed</td><td><span class="pill pr">High</span></td></tr>
@@ -1352,8 +1353,8 @@ const METRIC_DEFS = {
   entry_paths: {
     title: 'Top entry paths',
     def: 'Which screens guests come FROM when they start a booking.',
-    calc: 'source_screen dimension on booking_start events, e.g. home_widget, nav_bar, spotlight.',
-    note: 'If source_screen is empty (not set), we cannot tell how guests found the department.',
+    calc: 'entry_point dimension on booking_start events, e.g. home_widget, nav_bar, spotlight.',
+    note: 'If entry_point is empty (not set), we cannot tell how guests found the department.',
   },
   app_crashes: {
     title: 'App crashes',
@@ -4434,7 +4435,7 @@ async function fuSelectScreen(screen, views, engagementTotal) {
   // Fallback: filter from cached click_events
   if (!screenClicks.length) {
     screenClicks = fuClickData.filter(r => {
-      const src = r['customEvent:source_screen'] || '';
+      const src = r['customEvent:entry_point'] || '';
       const mod = r['customEvent:source_module'] || '';
       if (screen === '/home') return mod === 'home';
       if (screen === '/fullmenu') return mod === 'dining';
@@ -5172,7 +5173,7 @@ function aaComputeSignals(curr, prev) {
 /* ══════════════════════════════════════════════════════════
    INSTRUMENTATION COVERAGE INDICATOR (v50)
    Shows what % of booking_start events carry source_module and
-   source_screen for the selected period. Lets you watch engineering
+   entry_point for the selected period. Lets you watch engineering
    fixes land without digging through GA4.
 ══════════════════════════════════════════════════════════ */
 function aaRenderCoverage(funnelData, entrySourceData) {
@@ -5188,11 +5189,11 @@ function aaRenderCoverage(funnelData, entrySourceData) {
     if (mod && mod !== '(not set)') modAttributed += r.eventCount;
   });
 
-  // source_screen coverage from dept_entry_source
+  // entry_point coverage from dept_entry_source
   const eRows = aaRows(entrySourceData);
   let scrTotal = 0, scrAttributed = 0;
   eRows.forEach(r => {
-    const scr = r['customEvent:source_screen'];
+    const scr = r['customEvent:entry_point'];
     scrTotal += r.eventCount;
     if (scr && scr !== '(not set)') scrAttributed += r.eventCount;
   });
@@ -5223,7 +5224,7 @@ function aaRenderCoverage(funnelData, entrySourceData) {
     <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;padding:8px 14px;background:var(--bg2);border-radius:8px;border-left:3px solid ${barColor}">
       <span style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);font-weight:500">Attribution coverage</span>
       ${badge('dept', modPct, 'source_module')}
-      ${badge('entry point', scrPct, 'source_screen')}
+      ${badge('entry point', scrPct, 'entry_point')}
       <span style="font-size:9px;color:var(--text3);margin-left:auto">% of booking_start events with the parameter · this period</span>
     </div>
   `;
@@ -5744,19 +5745,38 @@ async function aaMomFetch() {
     const raw = await res.json();
     if (raw.error) throw new Error(raw.error);
     const md = raw.current || raw;
-    const sessRows = (md.mom_sessions || { rows: [] }).rows || [];
-    const evtRows = (md.mom_events || { rows: [] }).rows || [];
-    console.log(`[MoM] Fetched ${momStart} → today. Sessions rows: ${sessRows.length}, Events rows: ${evtRows.length}, Months: ${[...new Set(sessRows.map(r => (r.dimensionValues||[])[0]?.value))].sort().join(',')}`);
-    aaMomCache = {
-      sessions: md.mom_sessions || { rows: [] },
-      events: md.mom_events || { rows: [] },
-    };
+    const newSessions = md.mom_sessions || { rows: [] };
+    const newEvents = md.mom_events || { rows: [] };
+    const sessRows = newSessions.rows || [];
+    const evtRows = newEvents.rows || [];
+    const monthsInResp = [...new Set(sessRows.map(r => (r.dimensionValues||[])[0]?.value).filter(Boolean))];
+    console.log(`[MoM] Fetched ${momStart} → today. Sessions rows: ${sessRows.length}, Events rows: ${evtRows.length}, Months: ${monthsInResp.sort().join(',')}`);
+
+    // Guard against caching a partial/degraded response.
+    // If a prior cache had MORE months, this response is likely a partial
+    // GA4 result (processing lag/timeout) — don't overwrite good data with it.
+    const prevMonths = aaMomCache ? [...new Set((aaMomCache.sessions.rows||[]).map(r => (r.dimensionValues||[])[0]?.value).filter(Boolean))].length : 0;
+    if (aaMomCache && monthsInResp.length > 0 && monthsInResp.length < prevMonths && !aaMomForceRefresh) {
+      console.warn(`[MoM] Response has ${monthsInResp.length} months but cache has ${prevMonths}. Keeping cached data (likely partial response).`);
+      aaMomRender(aaMomCache.sessions, aaMomCache.events);
+      return;
+    }
+    aaMomForceRefresh = false;
+
+    aaMomCache = { sessions: newSessions, events: newEvents };
     aaMomRender(aaMomCache.sessions, aaMomCache.events);
   } catch (err) {
-    if (pills) pills.innerHTML = `<span style="font-size:10px;color:var(--red)">Failed: ${err.message}</span>`;
+    if (pills) pills.innerHTML = `<span style="font-size:10px;color:var(--red)">Failed: ${err.message} · <a href="#" onclick="aaMomRetry();return false" style="color:var(--red);text-decoration:underline">retry</a></span>`;
     if (el) el.innerHTML = `<div style="font-size:11px;color:var(--red);padding:12px 0">Failed to load MoM data: ${err.message}</div>`;
     console.error('MoM fetch error:', err);
   }
+}
+
+let aaMomForceRefresh = false;
+function aaMomRetry() {
+  aaMomForceRefresh = true;
+  aaMomCache = null;
+  aaMomFetch();
 }
 
 function aaMomRender(sessionsData, eventsData) {
@@ -5997,7 +6017,7 @@ function aaRenderKPIs(funnelData, screensData, healthData) {
 // Portfolio Health section (v47)
 // Shows session/user metrics, per-hotel breakdown, portfolio-wide funnel
 // from sessions → dept opens → booking_start → complete, and entry sources.
-// Handles instrumentation gaps gracefully (source_screen may be unpopulated).
+// Handles instrumentation gaps gracefully (entry_point may be unpopulated).
 //
 // v47.1 fixes:
 //   - Whitelist real hotel names to filter out junk ("Hotel", foreign props)
@@ -6100,7 +6120,7 @@ function aaRenderPortfolioHealth(metricsData, sessionsData, funnelData, screensD
   const entryBySource = {};
   let sourceHasData = false;
   eRows.forEach(r => {
-    const src = r['customEvent:source_screen'];
+    const src = r['customEvent:entry_point'];
     if (src && src !== '(not set)') {
       sourceHasData = true;
       entryBySource[src] = (entryBySource[src] || 0) + r.eventCount;
@@ -6247,11 +6267,11 @@ function aaRenderPortfolioHealth(metricsData, sessionsData, funnelData, screensD
           <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/maxEntry*100)}%;background:var(--teal)"></div></div>
           <div class="fu-bar-val" style="min-width:80px;text-align:right">${count.toLocaleString()} · ${Math.round(count/totalWithSource*100)}%</div>
         </div>`).join('')}
-      <div style="margin-top:8px;font-size:10px;color:var(--text3)">${totalWithSource.toLocaleString()} of ${totalBookingStarts.toLocaleString()} booking_start events (${Math.round(totalWithSource/totalBookingStarts*100)}%) have source_screen populated.</div>
+      <div style="margin-top:8px;font-size:10px;color:var(--text3)">${totalWithSource.toLocaleString()} of ${totalBookingStarts.toLocaleString()} booking_start events (${Math.round(totalWithSource/totalBookingStarts*100)}%) have entry_point populated.</div>
     </div>`;
   } else if (totalBookingStarts > 0) {
     html += `<div class="engg-note" style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:12px;font-size:11px;color:var(--amber-d)">
-      ⚠ <strong>Entry paths: instrumentation gap.</strong> ${totalBookingStarts.toLocaleString()} booking_start events fired but <code>source_screen</code> is not populated. Engineering needs to attach source_screen (where user came from: home_widget, nav_bar, spotlight, deep_link, etc.) to booking_start events to enable this analysis.
+      ⚠ <strong>Entry paths: instrumentation gap.</strong> ${totalBookingStarts.toLocaleString()} booking_start events fired but <code>entry_point</code> is not populated. Engineering needs to attach entry_point (where user came from: home_widget, nav_bar, spotlight, deep_link, etc.) to booking events to enable this analysis.
     </div>`;
   }
 
@@ -6460,7 +6480,7 @@ async function aaRenderDeptBody(dept, rows, cfg) {
 
     // ── Entry source · where guests enter this dept from ─────────────
     // Uses dept_entry_source report. Filters to this dept's source_module,
-    // groups by source_screen. If source_screen is (not set), surfaces the
+    // groups by entry_point. If entry_point is (not set), surfaces the
     // instrumentation gap rather than showing an empty section.
     if (aaEntrySourceData) {
       const entryRows = aaRows(aaEntrySourceData).filter(r => r['customEvent:source_module'] === mod);
@@ -6468,7 +6488,7 @@ async function aaRenderDeptBody(dept, rows, cfg) {
       let entryHasSource = false;
       let entryTotal = 0;
       entryRows.forEach(r => {
-        const src = r['customEvent:source_screen'];
+        const src = r['customEvent:entry_point'];
         entryTotal += r.eventCount;
         if (src && src !== '(not set)') {
           entryHasSource = true;
@@ -6492,7 +6512,7 @@ async function aaRenderDeptBody(dept, rows, cfg) {
         </div>`;
       } else if (entryTotal > 0 && !entryHasSource) {
         richHTML += `<div class="engg-note" style="margin-bottom:16px;background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;font-size:11px;color:var(--amber-d)">
-          ⚠ <strong>Entry source: instrumentation gap.</strong> ${entryTotal.toLocaleString()} booking_start events fired for this dept but <code>source_screen</code> is empty. Engineering needs to attach source_screen to booking events to enable per-dept entry analysis.
+          ⚠ <strong>Entry source: instrumentation gap.</strong> ${entryTotal.toLocaleString()} booking_start events fired for this dept but <code>entry_point</code> is empty. Engineering needs to attach entry_point to booking events to enable per-dept entry analysis.
         </div>`;
       }
     }
