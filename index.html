@@ -679,6 +679,9 @@ body.show-engg .engg-note { display: block !important; }
     <select id="aa-month-filter" onchange="aaSetMonth(this.value)" style="font-size:10px;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-family:var(--sans)">
     </select>
     <button class="fu-range-chip" data-start="7daysAgo" data-end="today" onclick="aaSetRange(this)" id="aa-7day-chip">Last 7 days</button>
+    <button class="fu-range-chip" data-start="30daysAgo" data-end="today" onclick="aaSetRange(this)">Last 30 days</button>
+    <button class="fu-range-chip" data-start="60daysAgo" data-end="today" onclick="aaSetRange(this)">Last 2 months</button>
+    <button class="fu-range-chip" data-start="90daysAgo" data-end="today" onclick="aaSetRange(this)">Last 3 months</button>
     <div style="width:1px;height:20px;background:var(--border)"></div>
     <span style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3)">Hotel</span>
     <select id="aa-hotel-filter" onchange="aaSetHotel(this.value)" style="font-size:10px;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-family:var(--sans)">
@@ -4643,10 +4646,12 @@ const DEPT_CONFIG = {
 };
 
 function aaSetRange(el) {
-  // "Last 7 days" chip — switch to rolling mode
+  // Range chip — switch to rolling mode
   aaStartDate = el.dataset.start;
   aaEndDate = el.dataset.end;
   aaIsMonthMode = false;
+  // Deactivate all range chips, then activate clicked one
+  document.querySelectorAll('.fu-range-chip').forEach(c => c.classList.remove('on'));
   el.classList.add('on');
   document.getElementById('aa-month-filter').value = '';
   aaCache = {}; aaLoaded = false; aaOpenDepts.clear();
@@ -4660,9 +4665,8 @@ function aaSetMonth(val) {
   aaStartDate = b.start;
   aaEndDate = b.end;
   aaIsMonthMode = true;
-  // Deactivate 7-day chip
-  const chip = document.getElementById('aa-7day-chip');
-  if (chip) chip.classList.remove('on');
+  // Deactivate all range chips
+  document.querySelectorAll('.fu-range-chip').forEach(c => c.classList.remove('on'));
   aaCache = {}; aaLoaded = false; aaOpenDepts.clear();
   aaLoad(true);
 }
