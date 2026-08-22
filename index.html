@@ -442,7 +442,7 @@ body.show-engg .engg-note { display: block !important; }
 <div class="main">
 
 <!-- FILTER BAR -->
-<div class="fbar">
+<div class="fbar" id="fbar">
   <span class="fbar-label">Filter</span>
   <div class="dd-wrap">
     <button class="dd-btn" id="dd-month-btn" onclick="toggleDD('month')">
@@ -2414,7 +2414,37 @@ function go(id, el) {
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('on'));
   document.getElementById('p-'+id).classList.add('on');
   if(el) el.classList.add('on');
+  aaSyncFilterBar(id);
   rPage(id);
+}
+
+/* v53.2: App Analytics is driven by its own PERIOD/HOTEL row, not by the
+   shared filter bar at the top. Leaving the top bar reading "Jul 2026"
+   above a page showing "Aug 15 - Aug 22" invites a leader to attribute
+   the numbers to the wrong month. Dim it and say which control applies. */
+const AA_SELF_FILTERED_PAGES = ['ga'];
+function aaSyncFilterBar(id) {
+  const bar = document.getElementById('fbar');
+  if (!bar) return;
+  const selfFiltered = AA_SELF_FILTERED_PAGES.indexOf(id) !== -1;
+  bar.querySelectorAll('.dd-wrap, .fbar-reset, .fbar-label').forEach(n => {
+    n.style.opacity = selfFiltered ? '0.35' : '';
+    n.style.pointerEvents = selfFiltered ? 'none' : '';
+  });
+  let note = document.getElementById('fbar-selffilter-note');
+  if (selfFiltered) {
+    if (!note) {
+      note = document.createElement('span');
+      note.id = 'fbar-selffilter-note';
+      note.style.cssText = 'font-size:10px;color:var(--text3);margin-left:10px;white-space:nowrap';
+      const spacer = bar.querySelector('.fbar-spacer');
+      if (spacer) bar.insertBefore(note, spacer); else bar.appendChild(note);
+    }
+    note.textContent = 'This page uses the period and hotel controls below.';
+    note.style.display = '';
+  } else if (note) {
+    note.style.display = 'none';
+  }
 }
 
 function rPage(id) {
@@ -5082,25 +5112,38 @@ let aaFeatShowBlocked = false;
    Interpretation: same app code everywhere, so a wide spread means the
    difference is coming from content or operations, not the build.      */
 function aaFeatVariance(byHotel) {
-  const rates = [];
+  const qualifying = [], zeroCompletion = [];
   Object.entries(byHotel || {}).forEach(([name, h]) => {
     if (!h || h.starts < AA_FEAT_MIN_HOTEL_STARTS) return;
-    rates.push({ name, rate: h.starts > 0 ? (h.completes / h.starts * 100) : 0 });
+    // A hotel with starts but zero completions is a tracking-gap candidate,
+    // not a 0% performer. It must NOT anchor the ratio — doing that produced
+    // a fabricated "142.5x spread" in v53.1, which was really 14.2 / 0.1
+    // where 0.1 was a divide-by-zero guard, not an observed rate.
+    if (h.completes === 0) { zeroCompletion.push({ name, starts: h.starts }); return; }
+    qualifying.push({ name, rate: h.completes / h.starts * 100, starts: h.starts });
   });
-  if (rates.length < AA_FEAT_MIN_HOTELS_FOR_VARIANCE) {
-    return { verdict: 'insufficient', n: rates.length,
-             detail: `Only ${rates.length} hotel${rates.length === 1 ? '' : 's'} cleared ${AA_FEAT_MIN_HOTEL_STARTS} starts — too few to separate product from content.` };
+
+  const zeroNote = zeroCompletion.length
+    ? ` · ${zeroCompletion.map(z => z.name).join(', ')} recorded starts but no completions — excluded as a likely tracking gap`
+    : '';
+
+  if (qualifying.length < AA_FEAT_MIN_HOTELS_FOR_VARIANCE) {
+    if (zeroCompletion.length && !qualifying.length) {
+      return { verdict: 'insufficient', n: 0,
+               detail: `No hotel recorded a completion. Likely a tracking gap, not a spread.` };
+    }
+    return { verdict: 'insufficient', n: qualifying.length,
+             detail: `Only ${qualifying.length} hotel${qualifying.length === 1 ? '' : 's'} cleared ${AA_FEAT_MIN_HOTEL_STARTS} starts with completions — too few to separate product from content${zeroNote}.` };
   }
-  const nonZero = rates.filter(r => r.rate > 0);
-  if (!nonZero.length) {
-    return { verdict: 'insufficient', n: rates.length, detail: 'No hotel recorded a completion — likely a tracking gap, not a spread.' };
-  }
-  rates.sort((a, b) => b.rate - a.rate);
-  const hi = rates[0], lo = rates[rates.length - 1];
-  const loRate = lo.rate > 0 ? lo.rate : 0.1; // avoid divide-by-zero blowing the ratio to Infinity
-  const ratio = hi.rate / loRate;
-  const mean = rates.reduce((a, r) => a + r.rate, 0) / rates.length;
-  const sd = Math.sqrt(rates.reduce((a, r) => a + Math.pow(r.rate - mean, 2), 0) / rates.length);
+
+  qualifying.sort((a, b) => b.rate - a.rate);
+  const hi = qualifying[0], lo = qualifying[qualifying.length - 1];
+  // Round ONCE and classify on the rounded value, so the number shown can
+  // never contradict the verdict (2.96 displayed as "3.0x" but classified
+  // as "mixed" reads as a bug even though both were correct).
+  const ratio = Math.round((hi.rate / lo.rate) * 10) / 10; // lo.rate > 0 by construction
+  const mean = qualifying.reduce((a, r) => a + r.rate, 0) / qualifying.length;
+  const sd = Math.sqrt(qualifying.reduce((a, r) => a + Math.pow(r.rate - mean, 2), 0) / qualifying.length);
   const cv = mean > 0 ? sd / mean : 0;
 
   let verdict;
@@ -5109,9 +5152,9 @@ function aaFeatVariance(byHotel) {
   else verdict = 'mixed';
 
   return {
-    verdict, n: rates.length, ratio, cv, mean,
+    verdict, n: qualifying.length, ratio, cv, mean, zeroCompletion,
     hi: hi.name, hiRate: hi.rate, lo: lo.name, loRate: lo.rate,
-    detail: `${rates.length} hotels · ${hi.name} ${hi.rate.toFixed(1)}% → ${lo.name} ${lo.rate.toFixed(1)}% · ${ratio.toFixed(1)}× spread`,
+    detail: `${qualifying.length} hotels · ${hi.name} ${hi.rate.toFixed(1)}% → ${lo.name} ${lo.rate.toFixed(1)}% · ${ratio.toFixed(1)}× spread${zeroNote}`,
   };
 }
 
@@ -5158,21 +5201,37 @@ function aaFeatCarousel(md, mdPrev) {
     return { imp, tap, add };
   };
   const c = build(md), p = mdPrev ? build(mdPrev) : null;
-  const engRate = aaFeatPct(c.tap, c.imp);
-  const outRate = aaFeatPct(c.add, c.tap);
-  const pOutRate = p ? aaFeatPct(p.add, p.tap) : null;
+
+  // The "tap" and "add" counters read two labels for the SAME user action:
+  // add_suggested_item and recommendation_added_to_cart fire together. In
+  // v53.1 this rendered as a 3-stage funnel ending in a meaningless "100.0%".
+  // When the two counts match, collapse to the real 2-stage funnel.
+  const doubleCounted = c.tap > 0 && c.tap === c.add;
+  const stages = doubleCounted
+    ? [ { val: c.imp, label: 'cards shown', rate: null },
+        { val: c.add, label: 'added to cart', rate: aaFeatPct(c.add, c.imp), rateOf: 'of cards shown' } ]
+    : [ { val: c.imp, label: 'cards shown', rate: null },
+        { val: c.tap, label: 'tapped', rate: aaFeatPct(c.tap, c.imp), rateOf: 'of cards shown' },
+        { val: c.add, label: 'added to cart', rate: aaFeatPct(c.add, c.tap), rateOf: 'of taps' } ];
+
+  const keyRate  = aaFeatPct(c.add, c.imp);
+  const pKeyRate = p ? aaFeatPct(p.add, p.imp) : null;
 
   return {
     id: 'carousel', name: 'Recommendation carousel', owner: 'Product',
     where: 'IRD cart · "Add some more delicacies"',
     status: c.imp > 0 ? 'measured' : 'blocked',
-    blocker: c.imp > 0 ? null : 'No recommendation_impression events in this window.',
+    stages,
+    base: c.imp,
+    note: doubleCounted
+      ? 'Two stages, not three — <code>add_suggested_item</code> and <code>recommendation_added_to_cart</code> log the same action, so there is no separate tap step to measure.'
+      : null,
     exposure:   { val: c.imp, label: 'cards shown' },
-    engagement: { val: c.tap, label: 'tapped', rate: engRate, rateLabel: 'of cards shown' },
-    outcome:    { val: c.add, label: 'added to cart', rate: outRate, rateLabel: 'of taps' },
+    engagement: { val: c.add, label: 'added to cart', rate: keyRate, rateLabel: 'of cards shown' },
+    outcome:    { val: null, label: '', rate: null },
     variance:   { verdict: 'blocked', detail: 'Add customUser:property to the recommendations report in ga4.js.' },
-    trend: aaFeatTrend(outRate, pOutRate, 30, c.tap, p ? p.tap : 0),
-    trendOf: 'tap → cart rate',
+    trend: aaFeatTrend(keyRate, pKeyRate, 200, c.imp, p ? p.imp : 0),
+    trendOf: 'shown → cart rate',
   };
 }
 
@@ -5189,18 +5248,30 @@ function aaFeatNotifications(md, mdPrev) {
   const engRate = aaFeatPct(c.opn, c.rec);
   const pEngRate = p ? aaFeatPct(p.opn, p.rec) : null;
 
+  // 157 delivered across 11 hotels in 7 days is ~2/hotel/day. Either almost
+  // nothing is being sent, or notification_receive only fires in foreground.
+  // Either way an open rate off that base is not a channel metric.
+  const LOW_VOLUME = 500;
+  const lowVolume = c.rec > 0 && c.rec < LOW_VOLUME;
+
   return {
     id: 'notifications', name: 'Push notifications', owner: 'Shared (product sends, hotel writes copy)',
     where: 'System notifications',
     status: c.rec > 0 ? 'partial' : 'blocked',
-    blocker: c.rec > 0
-      ? 'No event links an opened notification to what the guest did next — Outcome is unmeasurable. Add a deep-link parameter carried into the landing screen.'
-      : 'No notification_receive events in this window.',
+    base: c.rec,
+    lowVolume,
+    stages: [
+      { val: c.rec, label: 'delivered', rate: null },
+      { val: c.opn, label: 'opened', rate: engRate, rateOf: 'of delivered' },
+    ],
+    note: lowVolume
+      ? `Only ${c.rec.toLocaleString()} delivered across 11 hotels this period — around two per hotel per day. Check the sending system before reading the open rate: <code>notification_receive</code> may only fire in foreground.`
+      : 'No event links an opened notification to what the guest did next. Add a deep-link parameter carried into the landing screen to measure outcome.',
     exposure:   { val: c.rec, label: 'delivered' },
     engagement: { val: c.opn, label: 'opened', rate: engRate, rateLabel: 'of delivered' },
     outcome:    { val: null, label: 'no post-open event', rate: null, rateLabel: '' },
     variance:   { verdict: 'blocked', detail: 'Add customUser:property to the notifications report in ga4.js.' },
-    trend: aaFeatTrend(engRate, pEngRate, 50, c.rec, p ? p.rec : 0),
+    trend: aaFeatTrend(engRate, pEngRate, 200, c.rec, p ? p.rec : 0),
     trendOf: 'open rate',
   };
 }
@@ -5451,23 +5522,37 @@ function aaFeatRenderDiscovery(rows) {
    Real 3-stage funnels. One line each, stages inline.                  */
 function aaFeatRenderEngagement(rows) {
   if (!rows.length) return '';
-  const stage = (val, label, rate) => `
+  const GRID = 'display:grid;grid-template-columns:1.6fr 0.9fr 0.9fr 0.9fr 0.8fr;gap:12px';
+
+  const head = `<div style="${GRID};padding-bottom:7px;border-bottom:1px solid var(--border)">
+    ${['Feature', 'Reach', 'Engaged', 'Converted', 'Trend'].map((h, i) =>
+      `<div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)${i === 4 ? ';text-align:right' : ''}">${h}</div>`).join('')}
+  </div>`;
+
+  const cell = (s) => `
     <div style="min-width:0">
-      <div style="font-size:13px;font-weight:600;font-family:var(--serif);line-height:1.15">${val === null ? '—' : Number(val).toLocaleString()}</div>
-      <div style="font-size:9px;color:var(--text3);margin-top:1px">${label}${rate !== null && rate !== undefined ? ` · ${rate.toFixed(1)}%` : ''}</div>
+      <div style="font-size:13px;font-weight:600;font-family:var(--serif);line-height:1.15">${!s || s.val === null ? '—' : Number(s.val).toLocaleString()}</div>
+      <div style="font-size:9px;color:var(--text3);margin-top:1px;line-height:1.3">${!s ? 'not tracked' : s.label + (s.rate !== null && s.rate !== undefined ? ` · ${s.rate.toFixed(1)}%` : '')}</div>
     </div>`;
 
-  return rows.map(r => `
-    <div style="display:grid;grid-template-columns:1.5fr 0.8fr 0.8fr 0.8fr 0.7fr;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid var(--border)">
+  const body = rows.map(r => {
+    // Stage count varies (2 for a collapsed funnel, 3 for a real one).
+    // Pad to 3 so the columns stay aligned across rows.
+    const st = (r.stages || []).slice(0, 3);
+    while (st.length < 3) st.push(null);
+    return `
+    <div style="${GRID};align-items:center;padding:11px 0;border-bottom:1px solid var(--border)">
       <div style="min-width:0">
         <div style="font-size:12px;font-weight:500;color:var(--text)">${r.name}</div>
         <div style="font-size:9px;color:var(--text3);margin-top:2px">${r.where}</div>
       </div>
-      ${stage(r.exposure.val, r.exposure.label, null)}
-      ${stage(r.engagement.val, r.engagement.label, r.engagement.rate)}
-      ${stage(r.outcome.val, r.outcome.label, r.outcome.rate)}
+      ${cell(st[0])}${cell(st[1])}${cell(st[2])}
       <div style="text-align:right">${aaFeatDeltaChip(r.trend)}<div style="font-size:9px;color:var(--text3);margin-top:1px">${r.trendOf || ''}</div></div>
-    </div>`).join('');
+    </div>
+    ${r.note ? `<div style="padding:0 0 10px 2px;font-size:10px;color:var(--text3);line-height:1.5">${r.lowVolume ? '⚠ ' : ''}${r.note}</div>` : ''}`;
+  }).join('');
+
+  return head + body;
 }
 
 /* ── Group 3: booking flows ───────────────────────────────────────────
@@ -5545,22 +5630,33 @@ function aaRenderFeatureScorecard(md, mdPrev) {
   let discovery = [], engagement = [], flows = [];
   try {
     discovery  = aaFeatEntryPoints(md, mdPrev);
-    engagement = [aaFeatCarousel(md, mdPrev), aaFeatNotifications(md, mdPrev)].filter(f => (f.exposure.val || 0) > 0);
+    engagement = [aaFeatCarousel(md, mdPrev), aaFeatNotifications(md, mdPrev)].filter(f => (f.base || 0) > 0);
     flows      = aaFeatDepartments(md, mdPrev);
   } catch (e) {
     el.innerHTML = `<div style="font-size:11px;color:var(--red);padding:8px">Feature scorecard failed to build: ${e.message}</div>`;
     return;
   }
 
-  const measurable = flows.filter(f => f.status !== 'blocked').length + engagement.length;
-  const totalKnown = discovery.length + engagement.length + flows.length + AA_FEAT_BLOCKED.length;
+  // v53.2: the old headline moved between loads (1 of 23, then 10 of 23)
+  // because the numerator counted whichever department flows happened to
+  // record starts in the window. A headline that changes with the date
+  // range is not a headline. Report the three states explicitly instead.
+  const withOutcome  = flows.filter(f => f.status !== 'blocked').length + engagement.length;
+  const shareOnly    = discovery.length;
+  const noTracking   = flows.filter(f => f.status === 'blocked').length + AA_FEAT_BLOCKED.length;
+
+  const pill = (n, label, color) => `
+    <div style="display:flex;align-items:baseline;gap:6px">
+      <span style="font-family:var(--serif);font-size:15px;font-weight:600;color:${color}">${n}</span>
+      <span style="font-size:10px;color:var(--text3)">${label}</span>
+    </div>`;
 
   const summary = `
-    <div style="display:flex;gap:16px;align-items:baseline;flex-wrap:wrap;padding-bottom:12px;border-bottom:1px solid var(--border)">
-      <div style="font-size:11px;color:var(--text2)">
-        <strong style="color:var(--text);font-family:var(--serif);font-size:15px">${measurable}</strong> of ${totalKnown} features have usable outcome data
-      </div>
-      <div style="margin-left:auto;font-size:10px;color:var(--text3);max-width:420px;line-height:1.45;text-align:right">
+    <div style="display:flex;gap:20px;align-items:baseline;flex-wrap:wrap;padding-bottom:12px;border-bottom:1px solid var(--border)">
+      ${pill(withOutcome, 'report an outcome', 'var(--text)')}
+      ${pill(shareOnly, 'show share only', 'var(--text2)')}
+      ${pill(noTracking, 'not instrumented', 'var(--text3)')}
+      <div style="margin-left:auto;font-size:10px;color:var(--text3);max-width:400px;line-height:1.45;text-align:right">
         Same build runs at all 11 hotels — a feature that behaves the same everywhere is yours to fix, one that varies widely is content or operations.
       </div>
     </div>`;
