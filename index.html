@@ -713,21 +713,20 @@ body.show-engg .engg-note { display: block !important; }
     <!-- v50: Instrumentation coverage indicator -->
     <div id="aa-coverage-bar" style="margin-bottom:14px"></div>
 
-    <!-- v53: FEATURE SCORECARD — leadership's primary question.
-         Placed above everything because "which feature works" is what this
-         page is opened to answer. Departments are supporting context below. -->
+    <!-- v53: FEATURE SCORECARD — leadership's primary question is "which
+         feature works", so it sits above everything. Three groups, three
+         shapes: discovery surfaces have only a share (bar), engagement
+         features have a real funnel (stages), booking flows have volume +
+         spread (table). Do not merge them back into one grid — that was
+         v53.0 and it rendered as four columns of dashes. -->
     <div class="card" style="margin-bottom:16px;border-left:3px solid var(--blue)">
       <div class="card-head">
         <div>
           <div class="card-title">Feature scorecard</div>
-          <div class="card-sub">Exposure → engagement → outcome, per feature · with a product-vs-content read from cross-hotel spread</div>
+          <div class="card-sub">What guests use, what they don't, and whether the lever is product or hotel content</div>
         </div>
       </div>
       <div style="padding:0 20px 20px">
-        <div style="padding:8px 12px;background:var(--bg2);border-radius:6px;margin-bottom:12px;font-size:10px;color:var(--text2);line-height:1.5">
-          <strong>Read these as patterns, not counts.</strong> GA4 undercounts completions and overcounts starts, so use this to see
-          <em>where</em> guests go and <em>which direction</em> things moved. For absolute numbers and revenue, use Scorecard and Revenue.
-        </div>
         <div id="aa-feature-body"><div class="fu-loading"><div class="fu-spinner"></div>Building feature scorecard...</div></div>
       </div>
     </div>
@@ -5075,7 +5074,7 @@ const AA_FEAT_MIN_HOTEL_STARTS = 30;
 // A hotel must clear this to be included at all (filters partially-live props).
 const AA_FEAT_MIN_HOTELS_FOR_VARIANCE = 4;
 
-let aaFeatShowBlocked = true;
+let aaFeatShowBlocked = false;
 
 /* ── Variance classifier ──────────────────────────────────────────────
    Takes {hotelName: {starts, completes}} and returns a verdict.
@@ -5376,93 +5375,166 @@ const AA_FEAT_BLOCKED = [
     ask: 'Fire booking_start / booking_complete from the chat order path with source_module and entry_point="chat".' },
 ];
 
-/* ── Renderer ─────────────────────────────────────────────────────── */
-function aaFeatCell(main, sub, tone) {
-  const color = tone === 'muted' ? 'var(--text3)' : 'var(--text)';
-  return `<div style="min-width:0">
-    <div style="font-size:13px;font-weight:600;font-family:var(--serif);color:${color};line-height:1.2">${main}</div>
-    ${sub ? `<div style="font-size:9px;color:var(--text3);margin-top:2px;line-height:1.3">${sub}</div>` : ''}
-  </div>`;
+/* ── Renderer (v53.1) ─────────────────────────────────────────────────
+   Rebuilt after v53 shipped as an unreadable wall. Three fixes:
+
+   1. BLOCKERS ARE DEDUPLICATED. The same missing-event message appeared
+      under every row that shared it. Now it appears once, at the foot of
+      the group it applies to.
+   2. THREE SHAPES, NOT ONE TABLE. Discovery surfaces only have a share
+      number, so they render as one share bar. Engagement features have a
+      real 3-stage funnel, so they render as funnel lines. Booking flows
+      have volume + rate + spread, so they get a table. Forcing all three
+      into a six-column grid produced four columns of dashes.
+   3. NO EMPTY COLUMNS. A column only renders where the data exists.
+══════════════════════════════════════════════════════════════════════ */
+
+const AA_FEAT_SHARE_COLORS = ['var(--blue)', 'var(--teal)', 'var(--amber)', 'var(--text3)', 'var(--red)'];
+
+function aaFeatDeltaChip(t) {
+  if (!t || t.insufficient) return `<span style="font-size:9px;color:var(--text3)">—</span>`;
+  if (t.dir === 'flat') return `<span style="font-size:10px;color:var(--text3)">▬ flat</span>`;
+  const up = t.dir === 'up';
+  return `<span style="font-size:10px;font-weight:600;color:${up ? 'var(--teal)' : 'var(--amber)'}">${up ? '▲' : '▼'} ${Math.abs(t.delta).toFixed(1)}pt</span>`;
 }
 
-function aaFeatTrendCell(t, ofWhat) {
-  if (!t) return aaFeatCell('—', 'no prior window', 'muted');
-  if (t.insufficient) return aaFeatCell('—', t.note, 'muted');
-  const arrow = t.dir === 'up' ? '▲' : t.dir === 'down' ? '▼' : '▬';
-  const col = t.dir === 'flat' ? 'var(--text3)' : (t.dir === 'up' ? 'var(--teal)' : 'var(--amber)');
-  return `<div style="min-width:0">
-    <div style="font-size:13px;font-weight:600;font-family:var(--serif);color:${col};line-height:1.2">${arrow} ${Math.abs(t.delta).toFixed(1)}pt</div>
-    <div style="font-size:9px;color:var(--text3);margin-top:2px;line-height:1.3">${ofWhat} · ${t.prevRate.toFixed(1)}% → ${t.currRate.toFixed(1)}%</div>
-  </div>`;
+/* Group-level note. One line, once, at the foot of the group it governs. */
+function aaFeatNote(text) {
+  return `<div style="margin-top:10px;font-size:10px;color:var(--text3);line-height:1.5;padding-left:2px">${text}</div>`;
 }
 
-function aaFeatVarianceCell(v) {
-  if (!v) return aaFeatCell('—', '', 'muted');
-  const meta = AA_FEAT_VERDICT_META[v.verdict] || AA_FEAT_VERDICT_META.insufficient;
-  const toneMap = { teal: 'var(--teal)', amber: 'var(--amber)', blue: 'var(--blue)', grey: 'var(--text3)' };
-  const col = toneMap[meta.tone] || 'var(--text3)';
-  return `<div style="min-width:0">
-    <div style="font-size:10px;font-weight:600;color:${col};line-height:1.3">${meta.label}</div>
-    <div style="font-size:9px;color:var(--text3);margin-top:2px;line-height:1.3">${v.detail || ''}</div>
+/* ── Group 1: discovery surfaces ──────────────────────────────────────
+   These only have share-of-starts today. A share is a bar, not a table. */
+function aaFeatRenderDiscovery(rows) {
+  const live = rows.filter(r => (r.engagement.val || 0) > 0);
+  const total = live.reduce((a, r) => a + r.engagement.val, 0);
+  if (!total) {
+    return `<div style="font-size:11px;color:var(--text3);padding:6px 0">No booking starts carried an entry point in this window.</div>`;
+  }
+  const sorted = [...live].sort((a, b) => b.engagement.val - a.engagement.val);
+  const dead = rows.filter(r => (r.engagement.val || 0) === 0);
+  const hasOutcome = rows.some(r => r.outcome && r.outcome.val !== null);
+
+  const bar = `<div style="display:flex;height:26px;border-radius:5px;overflow:hidden;margin-bottom:10px">
+    ${sorted.map((r, i) => {
+      const pct = r.engagement.val / total * 100;
+      return `<div title="${r.name}: ${r.engagement.val.toLocaleString()} starts" style="width:${pct}%;background:${AA_FEAT_SHARE_COLORS[i % AA_FEAT_SHARE_COLORS.length]};display:flex;align-items:center;justify-content:center;min-width:0">
+        ${pct > 8 ? `<span style="font-size:10px;font-weight:600;color:#fff">${pct.toFixed(0)}%</span>` : ''}
+      </div>`;
+    }).join('')}
   </div>`;
+
+  const legend = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
+    ${sorted.map((r, i) => `
+      <div style="display:flex;align-items:baseline;gap:7px;min-width:0">
+        <span style="width:8px;height:8px;border-radius:2px;background:${AA_FEAT_SHARE_COLORS[i % AA_FEAT_SHARE_COLORS.length]};flex-shrink:0"></span>
+        <div style="min-width:0;flex:1">
+          <div style="font-size:11px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.name}</div>
+          <div style="font-size:9px;color:var(--text3);margin-top:1px">${r.engagement.val.toLocaleString()} starts · ${aaFeatDeltaChip(r.trend)}</div>
+        </div>
+      </div>`).join('')}
+  </div>`;
+
+  const deadNote = dead.length
+    ? `<div style="margin-top:10px;padding:7px 10px;background:var(--bg2);border-radius:5px;font-size:10px;color:var(--text2);line-height:1.5">
+         <strong>${dead.map(d => d.name).join(', ')}</strong> — no starts carried this entry point. Either the surface is unused, or the parameter is not attached on that path.
+       </div>` : '';
+
+  const note = hasOutcome
+    ? ''
+    : aaFeatNote('Share only. <code>dept_entry_source</code> returns <code>booking_start</code> — add <code>booking_complete</code> to it in ga4.js and these become conversion rates per surface.');
+
+  return bar + legend + deadNote + note;
 }
 
-function aaFeatRow(f) {
-  const statusMeta = {
-    measured: { dot: 'var(--teal)',  label: 'Measured' },
-    partial:  { dot: 'var(--amber)', label: 'Partly measured' },
-    blocked:  { dot: 'var(--text3)', label: 'Not measurable' },
-  }[f.status] || { dot: 'var(--text3)', label: '' };
+/* ── Group 2: engagement features ─────────────────────────────────────
+   Real 3-stage funnels. One line each, stages inline.                  */
+function aaFeatRenderEngagement(rows) {
+  if (!rows.length) return '';
+  const stage = (val, label, rate) => `
+    <div style="min-width:0">
+      <div style="font-size:13px;font-weight:600;font-family:var(--serif);line-height:1.15">${val === null ? '—' : Number(val).toLocaleString()}</div>
+      <div style="font-size:9px;color:var(--text3);margin-top:1px">${label}${rate !== null && rate !== undefined ? ` · ${rate.toFixed(1)}%` : ''}</div>
+    </div>`;
 
-  const expCell = f.exposure && f.exposure.val !== null
-    ? aaFeatCell(aaFeatNum(f.exposure.val), f.exposure.label)
-    : aaFeatCell('—', f.exposure ? f.exposure.label : 'not tracked', 'muted');
-
-  const engCell = f.engagement && f.engagement.val !== null
-    ? aaFeatCell(aaFeatNum(f.engagement.val),
-        (f.engagement.rate !== null && f.engagement.rate !== undefined ? aaFeatFmtPct(f.engagement.rate) + ' ' + (f.engagement.rateLabel || '') : f.engagement.label))
-    : aaFeatCell('—', 'not tracked', 'muted');
-
-  const outCell = f.outcome && f.outcome.val !== null
-    ? aaFeatCell(aaFeatNum(f.outcome.val),
-        (f.outcome.rate !== null && f.outcome.rate !== undefined ? aaFeatFmtPct(f.outcome.rate) + ' ' + (f.outcome.rateLabel || '') : f.outcome.label))
-    : aaFeatCell('—', f.outcome ? f.outcome.label : 'not tracked', 'muted');
-
-  return `
-  <div style="border-bottom:1px solid var(--border);padding:12px 0">
-    <div style="display:grid;grid-template-columns:1.6fr 0.9fr 0.9fr 0.9fr 1.3fr 1.1fr;gap:12px;align-items:start">
+  return rows.map(r => `
+    <div style="display:grid;grid-template-columns:1.5fr 0.8fr 0.8fr 0.8fr 0.7fr;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid var(--border)">
       <div style="min-width:0">
-        <div style="display:flex;align-items:center;gap:6px">
-          <span style="width:7px;height:7px;border-radius:50%;background:${statusMeta.dot};flex-shrink:0"></span>
-          <span style="font-size:12px;font-weight:500;color:var(--text)">${f.name}</span>
-        </div>
-        <div style="font-size:9px;color:var(--text3);margin-top:3px;line-height:1.4">${f.where} · owner: ${f.owner}</div>
+        <div style="font-size:12px;font-weight:500;color:var(--text)">${r.name}</div>
+        <div style="font-size:9px;color:var(--text3);margin-top:2px">${r.where}</div>
       </div>
-      ${expCell}
-      ${engCell}
-      ${outCell}
-      ${aaFeatVarianceCell(f.variance)}
-      ${aaFeatTrendCell(f.trend, f.trendOf)}
-    </div>
-    ${f.blocker ? `<div style="margin-top:8px;margin-left:13px;padding:7px 10px;background:var(--bg2);border-left:2px solid var(--border);border-radius:0 4px 4px 0;font-size:10px;color:var(--text2);line-height:1.5">${f.blocker}</div>` : ''}
-    ${f.exposureBlocked ? `<div style="margin-top:6px;margin-left:13px;padding:7px 10px;background:var(--bg2);border-left:2px solid var(--border);border-radius:0 4px 4px 0;font-size:10px;color:var(--text2);line-height:1.5"><strong>Exposure unavailable:</strong> ${f.exposureBlocked}</div>` : ''}
+      ${stage(r.exposure.val, r.exposure.label, null)}
+      ${stage(r.engagement.val, r.engagement.label, r.engagement.rate)}
+      ${stage(r.outcome.val, r.outcome.label, r.outcome.rate)}
+      <div style="text-align:right">${aaFeatDeltaChip(r.trend)}<div style="font-size:9px;color:var(--text3);margin-top:1px">${r.trendOf || ''}</div></div>
+    </div>`).join('');
+}
+
+/* ── Group 3: booking flows ───────────────────────────────────────────
+   The only group where cross-hotel variance is computable, so the
+   product-vs-content verdict lives here and nowhere else.              */
+function aaFeatRenderFlows(rows) {
+  if (!rows.length) return `<div style="font-size:11px;color:var(--text3);padding:6px 0">No department flows recorded starts in this window.</div>`;
+
+  const toneMap = { teal: 'var(--teal)', amber: 'var(--amber)', blue: 'var(--blue)', grey: 'var(--text3)' };
+
+  const head = `<div style="display:grid;grid-template-columns:1.5fr 0.7fr 0.7fr 1.9fr 0.7fr;gap:12px;padding-bottom:7px;border-bottom:1px solid var(--border)">
+    ${['Flow', 'Entered', 'Completed', 'Spread across hotels', 'Trend'].map((h, i) =>
+      `<div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);${i > 0 && i < 3 ? 'text-align:right' : ''}${i === 4 ? 'text-align:right' : ''}">${h}</div>`).join('')}
+  </div>`;
+
+  const body = rows.map(r => {
+    const v = r.variance || {};
+    const meta = AA_FEAT_VERDICT_META[v.verdict] || AA_FEAT_VERDICT_META.insufficient;
+    const col = toneMap[meta.tone] || 'var(--text3)';
+    const broken = r.status === 'blocked';
+    return `
+    <div style="display:grid;grid-template-columns:1.5fr 0.7fr 0.7fr 1.9fr 0.7fr;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="min-width:0">
+        <div style="font-size:12px;font-weight:500;color:${broken ? 'var(--text3)' : 'var(--text)'}">${r.name}</div>
+        ${broken ? `<div style="font-size:9px;color:var(--text3);margin-top:2px">not measurable — see note below</div>` : ''}
+      </div>
+      <div style="text-align:right;font-size:12px;font-family:var(--serif);color:var(--text2)">${(r.engagement.val || 0).toLocaleString()}</div>
+      <div style="text-align:right">
+        <div style="font-size:12px;font-family:var(--serif);font-weight:600">${(r.outcome.val || 0).toLocaleString()}</div>
+        <div style="font-size:9px;color:var(--text3)">${r.outcome.rate === null ? '' : r.outcome.rate.toFixed(1) + '%'}</div>
+      </div>
+      <div style="min-width:0">
+        <div style="font-size:10px;font-weight:600;color:${col}">${meta.label}</div>
+        <div style="font-size:9px;color:var(--text3);margin-top:1px;line-height:1.35">${v.detail || ''}</div>
+      </div>
+      <div style="text-align:right">${aaFeatDeltaChip(r.trend)}</div>
+    </div>`;
+  }).join('');
+
+  const brokenRows = rows.filter(r => r.status === 'blocked');
+  const brokenNote = brokenRows.length
+    ? `<div style="margin-top:10px;padding:7px 10px;background:var(--bg2);border-radius:5px;font-size:10px;color:var(--text2);line-height:1.5">
+         <strong>${brokenRows.map(r => r.name).join(', ')}</strong> — starts with zero completions. Treat as a tracking gap, not a 0% flow, until <code>booking_complete</code> is confirmed firing for that module.
+       </div>` : '';
+
+  return head + body + brokenNote +
+    aaFeatNote('“Entered” counts screen loads — <code>booking_start</code> fires on load, so it is not a measure of intent. Rates here are directional.');
+}
+
+/* ── Not-instrumented register ────────────────────────────────────────
+   Two compact columns. Collapsed by default — it is a reference list,
+   not a headline.                                                      */
+function aaFeatRenderBlocked() {
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px 20px">
+    ${AA_FEAT_BLOCKED.map(b => `
+      <div style="padding:8px 0;border-bottom:1px solid var(--border)">
+        <div style="font-size:11px;font-weight:500;color:var(--text)">${b.name} <span style="font-weight:400;color:var(--text3)">· ${b.where}</span></div>
+        <div style="font-size:10px;color:var(--text2);margin-top:3px;line-height:1.45">${b.blocker}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:3px;line-height:1.45"><strong style="color:var(--text2)">Ask:</strong> ${b.ask}</div>
+      </div>`).join('')}
   </div>`;
 }
 
-function aaFeatBlockedRow(b) {
-  return `
-  <div style="border-bottom:1px solid var(--border);padding:11px 0">
-    <div style="display:flex;align-items:flex-start;gap:8px">
-      <span style="width:7px;height:7px;border-radius:50%;background:var(--text3);flex-shrink:0;margin-top:5px"></span>
-      <div style="flex:1;min-width:0">
-        <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
-          <span style="font-size:12px;font-weight:500;color:var(--text)">${b.name}</span>
-          <span style="font-size:9px;color:var(--text3)">${b.where} · owner: ${b.owner}</span>
-        </div>
-        <div style="font-size:10px;color:var(--text2);margin-top:4px;line-height:1.5">${b.blocker}</div>
-        <div style="font-size:10px;color:var(--text2);margin-top:4px;line-height:1.5"><strong>Ask:</strong> ${b.ask}</div>
-      </div>
-    </div>
+function aaFeatGroupHead(title, sub) {
+  return `<div style="margin:18px 0 9px">
+    <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text2);font-weight:500">${title}</div>
+    ${sub ? `<div style="font-size:10px;color:var(--text3);margin-top:2px">${sub}</div>` : ''}
   </div>`;
 }
 
@@ -5470,60 +5542,46 @@ function aaRenderFeatureScorecard(md, mdPrev) {
   const el = document.getElementById('aa-feature-body');
   if (!el) return;
 
-  let features = [];
+  let discovery = [], engagement = [], flows = [];
   try {
-    features = features
-      .concat(aaFeatEntryPoints(md, mdPrev))
-      .concat([aaFeatCarousel(md, mdPrev), aaFeatNotifications(md, mdPrev)])
-      .concat(aaFeatDepartments(md, mdPrev));
+    discovery  = aaFeatEntryPoints(md, mdPrev);
+    engagement = [aaFeatCarousel(md, mdPrev), aaFeatNotifications(md, mdPrev)].filter(f => (f.exposure.val || 0) > 0);
+    flows      = aaFeatDepartments(md, mdPrev);
   } catch (e) {
     el.innerHTML = `<div style="font-size:11px;color:var(--red);padding:8px">Feature scorecard failed to build: ${e.message}</div>`;
     return;
   }
 
-  const measured = features.filter(f => f.status === 'measured').length;
-  const total = features.length + AA_FEAT_BLOCKED.length;
-
-  const header = `
-    <div style="display:grid;grid-template-columns:1.6fr 0.9fr 0.9fr 0.9fr 1.3fr 1.1fr;gap:12px;padding:0 0 8px;border-bottom:1px solid var(--border)">
-      <div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Feature</div>
-      <div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Exposure</div>
-      <div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Engagement</div>
-      <div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Outcome</div>
-      <div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Product or content</div>
-      <div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Trend</div>
-    </div>`;
+  const measurable = flows.filter(f => f.status !== 'blocked').length + engagement.length;
+  const totalKnown = discovery.length + engagement.length + flows.length + AA_FEAT_BLOCKED.length;
 
   const summary = `
-    <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;padding:10px 12px;background:var(--bg2);border-radius:6px;margin-bottom:14px">
+    <div style="display:flex;gap:16px;align-items:baseline;flex-wrap:wrap;padding-bottom:12px;border-bottom:1px solid var(--border)">
       <div style="font-size:11px;color:var(--text2)">
-        <strong style="color:var(--text);font-family:var(--serif);font-size:14px">${measured}</strong> of ${total} product features fully measurable
+        <strong style="color:var(--text);font-family:var(--serif);font-size:15px">${measurable}</strong> of ${totalKnown} features have usable outcome data
       </div>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:9px;color:var(--text3)">
-        <span><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--teal);margin-right:4px"></span>Measured</span>
-        <span><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--amber);margin-right:4px"></span>Partly measured</span>
-        <span><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--text3);margin-right:4px"></span>Not measurable</span>
-      </div>
-      <div style="margin-left:auto;font-size:9px;color:var(--text3);max-width:340px;line-height:1.4">
-        Same app code runs at all 11 hotels. A feature that behaves the same everywhere is yours to fix; one that varies widely is content or operations.
+      <div style="margin-left:auto;font-size:10px;color:var(--text3);max-width:420px;line-height:1.45;text-align:right">
+        Same build runs at all 11 hotels — a feature that behaves the same everywhere is yours to fix, one that varies widely is content or operations.
       </div>
     </div>`;
 
-  const blockedSection = `
-    <div style="margin-top:20px">
+  el.innerHTML =
+    summary +
+    aaFeatGroupHead('Discovery surfaces', 'Where guests start bookings from — the most product-owned surfaces in the app') +
+    aaFeatRenderDiscovery(discovery) +
+    (engagement.length ? aaFeatGroupHead('Engagement features', 'Exposure → engagement → outcome') + aaFeatRenderEngagement(engagement) : '') +
+    aaFeatGroupHead('Booking flows', 'Product or content? Cross-hotel spread decides') +
+    aaFeatRenderFlows(flows) +
+    `<div style="margin-top:18px;padding-top:12px;border-top:1px solid var(--border)">
       <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="aaFeatToggleBlocked()">
         <div>
-          <div class="sec-lbl" style="margin:0">Product features with no instrumentation · ${AA_FEAT_BLOCKED.length}</div>
-          <div style="font-size:10px;color:var(--text3);margin-top:3px">These are not zeros. Nothing is known about them either way.</div>
+          <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text2);font-weight:500">No instrumentation · ${AA_FEAT_BLOCKED.length} product features</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:2px">These are not zeros — nothing is known about them either way</div>
         </div>
         <span id="aa-feat-blocked-label" style="font-size:10px;color:var(--text3)">${aaFeatShowBlocked ? 'Hide' : 'Show'}</span>
       </div>
-      <div id="aa-feat-blocked-body" style="display:${aaFeatShowBlocked ? 'block' : 'none'};margin-top:10px">
-        ${AA_FEAT_BLOCKED.map(aaFeatBlockedRow).join('')}
-      </div>
+      <div id="aa-feat-blocked-body" style="display:${aaFeatShowBlocked ? 'block' : 'none'};margin-top:10px">${aaFeatRenderBlocked()}</div>
     </div>`;
-
-  el.innerHTML = summary + header + features.map(aaFeatRow).join('') + blockedSection;
 }
 
 function aaFeatToggleBlocked() {
