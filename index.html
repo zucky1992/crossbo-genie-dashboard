@@ -713,6 +713,25 @@ body.show-engg .engg-note { display: block !important; }
     <!-- v50: Instrumentation coverage indicator -->
     <div id="aa-coverage-bar" style="margin-bottom:14px"></div>
 
+    <!-- v53: FEATURE SCORECARD — leadership's primary question.
+         Placed above everything because "which feature works" is what this
+         page is opened to answer. Departments are supporting context below. -->
+    <div class="card" style="margin-bottom:16px;border-left:3px solid var(--blue)">
+      <div class="card-head">
+        <div>
+          <div class="card-title">Feature scorecard</div>
+          <div class="card-sub">Exposure → engagement → outcome, per feature · with a product-vs-content read from cross-hotel spread</div>
+        </div>
+      </div>
+      <div style="padding:0 20px 20px">
+        <div style="padding:8px 12px;background:var(--bg2);border-radius:6px;margin-bottom:12px;font-size:10px;color:var(--text2);line-height:1.5">
+          <strong>Read these as patterns, not counts.</strong> GA4 undercounts completions and overcounts starts, so use this to see
+          <em>where</em> guests go and <em>which direction</em> things moved. For absolute numbers and revenue, use Scorecard and Revenue.
+        </div>
+        <div id="aa-feature-body"><div class="fu-loading"><div class="fu-spinner"></div>Building feature scorecard...</div></div>
+      </div>
+    </div>
+
     <!-- v50: Month on Month Trend section — collapsible -->
     <div class="card" style="margin-bottom:16px">
       <div class="card-head" style="align-items:center;cursor:pointer" onclick="aaMomToggle()">
@@ -4981,6 +5000,7 @@ async function aaLoad(force = false) {
 
     // v49: Phase 2 additions
     aaRenderCoverage(funnel, deptEntrySource);
+    aaRenderFeatureScorecard(md, mdPrev);
     aaRenderSignal(md, mdPrev);
     aaRenderDeptRank(md, mdPrev);
 
@@ -5023,6 +5043,497 @@ async function aaLoad(force = false) {
     if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.style.opacity = ''; refreshBtn.style.cursor = ''; refreshBtn.textContent = '↻ Refresh'; }
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   FEATURE SCORECARD (v53)
+   ─────────────────────────────────────────────────────────────────────
+   Leadership's question is "which FEATURE works", not "which DEPARTMENT
+   converts". Departments are hotel service verticals; features are the
+   things product owns. This section answers the feature question in a
+   fixed five-column shape:
+
+     Exposure    — how many guests saw it
+     Engagement  — how many interacted
+     Outcome     — did the interaction lead anywhere
+     Variance    — spread across the 11 hotels → product vs content signal
+     Trend       — vs the previous window
+
+   Design rules (deliberate, do not "simplify" away):
+   1. A feature with no instrumentation renders as an explicit BLOCKED row
+      naming the owner and the missing event. It never renders as a zero,
+      because a zero reads as "nobody uses this" and a gap reads as
+      "we cannot see it". Those lead to opposite decisions.
+   2. Variance is only computed where the underlying report carries
+      customUser:property. Everywhere else it says which ga4.js report
+      needs the hotel dimension added. No fabricated spread.
+   3. No red/green on GA4 conversion, no benchmark language, no severity
+      words. This is a diagnosis surface, not an alerting surface.
+══════════════════════════════════════════════════════════════════════ */
+
+// Minimum starts a hotel needs before it counts toward a variance verdict.
+const AA_FEAT_MIN_HOTEL_STARTS = 30;
+// A hotel must clear this to be included at all (filters partially-live props).
+const AA_FEAT_MIN_HOTELS_FOR_VARIANCE = 4;
+
+let aaFeatShowBlocked = true;
+
+/* ── Variance classifier ──────────────────────────────────────────────
+   Takes {hotelName: {starts, completes}} and returns a verdict.
+   Ratio = best hotel rate / worst hotel rate among qualifying hotels.
+   Interpretation: same app code everywhere, so a wide spread means the
+   difference is coming from content or operations, not the build.      */
+function aaFeatVariance(byHotel) {
+  const rates = [];
+  Object.entries(byHotel || {}).forEach(([name, h]) => {
+    if (!h || h.starts < AA_FEAT_MIN_HOTEL_STARTS) return;
+    rates.push({ name, rate: h.starts > 0 ? (h.completes / h.starts * 100) : 0 });
+  });
+  if (rates.length < AA_FEAT_MIN_HOTELS_FOR_VARIANCE) {
+    return { verdict: 'insufficient', n: rates.length,
+             detail: `Only ${rates.length} hotel${rates.length === 1 ? '' : 's'} cleared ${AA_FEAT_MIN_HOTEL_STARTS} starts — too few to separate product from content.` };
+  }
+  const nonZero = rates.filter(r => r.rate > 0);
+  if (!nonZero.length) {
+    return { verdict: 'insufficient', n: rates.length, detail: 'No hotel recorded a completion — likely a tracking gap, not a spread.' };
+  }
+  rates.sort((a, b) => b.rate - a.rate);
+  const hi = rates[0], lo = rates[rates.length - 1];
+  const loRate = lo.rate > 0 ? lo.rate : 0.1; // avoid divide-by-zero blowing the ratio to Infinity
+  const ratio = hi.rate / loRate;
+  const mean = rates.reduce((a, r) => a + r.rate, 0) / rates.length;
+  const sd = Math.sqrt(rates.reduce((a, r) => a + Math.pow(r.rate - mean, 2), 0) / rates.length);
+  const cv = mean > 0 ? sd / mean : 0;
+
+  let verdict;
+  if (ratio >= 3 || cv >= 0.6) verdict = 'content';
+  else if (ratio <= 1.6 && cv < 0.3) verdict = 'product';
+  else verdict = 'mixed';
+
+  return {
+    verdict, n: rates.length, ratio, cv, mean,
+    hi: hi.name, hiRate: hi.rate, lo: lo.name, loRate: lo.rate,
+    detail: `${rates.length} hotels · ${hi.name} ${hi.rate.toFixed(1)}% → ${lo.name} ${lo.rate.toFixed(1)}% · ${ratio.toFixed(1)}× spread`,
+  };
+}
+
+const AA_FEAT_VERDICT_META = {
+  product:      { label: 'Product-controllable', tone: 'teal',  blurb: 'Behaves the same everywhere — same code, same result. If this needs fixing, it is yours to fix.' },
+  content:      { label: 'Content / ops driven', tone: 'amber', blurb: 'Same code, very different results by hotel. The lever is content or operations, not the build.' },
+  mixed:        { label: 'Mixed signal',         tone: 'blue',  blurb: 'Some spread across hotels. Product changes will help but will not close the whole gap.' },
+  insufficient: { label: 'Not enough data',      tone: 'grey',  blurb: '' },
+  blocked:      { label: 'Needs hotel dimension', tone: 'grey', blurb: '' },
+};
+
+/* ── Small helpers ─────────────────────────────────────────────────── */
+function aaFeatPct(num, den) { return den > 0 ? (num / den * 100) : null; }
+function aaFeatFmtPct(v, dp) { return v === null || v === undefined || !isFinite(v) ? '—' : v.toFixed(dp === undefined ? 1 : dp) + '%'; }
+function aaFeatNum(v) { return (v === null || v === undefined) ? '—' : Number(v).toLocaleString(); }
+
+/* Trend: change in the OUTCOME rate, in percentage points, vs prev window.
+   Rate not volume — volume moves with traffic, rate moves with the feature. */
+function aaFeatTrend(currRate, prevRate, minBase, currBase, prevBase) {
+  if (currRate === null || prevRate === null) return null;
+  if (currBase < (minBase || 30) || prevBase < (minBase || 30)) {
+    return { insufficient: true, note: 'too little volume to compare' };
+  }
+  const delta = currRate - prevRate;
+  return { delta, prevRate, currRate, dir: Math.abs(delta) < 1 ? 'flat' : (delta > 0 ? 'up' : 'down') };
+}
+
+/* ── Feature builders ─────────────────────────────────────────────────
+   Each returns a uniform object the renderer understands.              */
+
+function aaFeatSumEvt(rows, evt, filterFn) {
+  return rows.filter(r => r.eventName === evt && (!filterFn || filterFn(r)))
+             .reduce((a, r) => a + (r.eventCount || 0), 0);
+}
+
+/* Recommendation carousel: impression → tap → added to cart.
+   The only feature in the app with a genuine three-stage funnel today. */
+function aaFeatCarousel(md, mdPrev) {
+  const build = (src) => {
+    const rows = aaRows((src && src.recommendations) || { rows: [] });
+    const imp = aaFeatSumEvt(rows, 'recommendation_impression');
+    const tap = rows.filter(r => r['customEvent:label'] === 'add_suggested_item').reduce((a, r) => a + r.eventCount, 0);
+    const add = aaFeatSumEvt(rows, 'recommendation_added_to_cart');
+    return { imp, tap, add };
+  };
+  const c = build(md), p = mdPrev ? build(mdPrev) : null;
+  const engRate = aaFeatPct(c.tap, c.imp);
+  const outRate = aaFeatPct(c.add, c.tap);
+  const pOutRate = p ? aaFeatPct(p.add, p.tap) : null;
+
+  return {
+    id: 'carousel', name: 'Recommendation carousel', owner: 'Product',
+    where: 'IRD cart · "Add some more delicacies"',
+    status: c.imp > 0 ? 'measured' : 'blocked',
+    blocker: c.imp > 0 ? null : 'No recommendation_impression events in this window.',
+    exposure:   { val: c.imp, label: 'cards shown' },
+    engagement: { val: c.tap, label: 'tapped', rate: engRate, rateLabel: 'of cards shown' },
+    outcome:    { val: c.add, label: 'added to cart', rate: outRate, rateLabel: 'of taps' },
+    variance:   { verdict: 'blocked', detail: 'Add customUser:property to the recommendations report in ga4.js.' },
+    trend: aaFeatTrend(outRate, pOutRate, 30, c.tap, p ? p.tap : 0),
+    trendOf: 'tap → cart rate',
+  };
+}
+
+/* Push notifications: delivered → opened. There is no post-open outcome
+   event, so Outcome is honestly blank rather than guessed at.          */
+function aaFeatNotifications(md, mdPrev) {
+  const build = (src) => {
+    const rows = aaRows((src && src.notifications) || { rows: [] });
+    const rec = aaFeatSumEvt(rows, 'notification_receive');
+    const opn = aaFeatSumEvt(rows, 'notification_open');
+    return { rec, opn };
+  };
+  const c = build(md), p = mdPrev ? build(mdPrev) : null;
+  const engRate = aaFeatPct(c.opn, c.rec);
+  const pEngRate = p ? aaFeatPct(p.opn, p.rec) : null;
+
+  return {
+    id: 'notifications', name: 'Push notifications', owner: 'Shared (product sends, hotel writes copy)',
+    where: 'System notifications',
+    status: c.rec > 0 ? 'partial' : 'blocked',
+    blocker: c.rec > 0
+      ? 'No event links an opened notification to what the guest did next — Outcome is unmeasurable. Add a deep-link parameter carried into the landing screen.'
+      : 'No notification_receive events in this window.',
+    exposure:   { val: c.rec, label: 'delivered' },
+    engagement: { val: c.opn, label: 'opened', rate: engRate, rateLabel: 'of delivered' },
+    outcome:    { val: null, label: 'no post-open event', rate: null, rateLabel: '' },
+    variance:   { verdict: 'blocked', detail: 'Add customUser:property to the notifications report in ga4.js.' },
+    trend: aaFeatTrend(engRate, pEngRate, 50, c.rec, p ? p.rec : 0),
+    trendOf: 'open rate',
+  };
+}
+
+/* Entry-point surfaces: home widget, nav bar, spotlight, chat.
+   These are the discovery surfaces — the most product-owned thing in
+   the app. dept_entry_source gives us starts by entry_point. Whether it
+   also carries booking_complete decides if Outcome is real; we detect
+   that rather than assuming, and say so when it is missing.            */
+function aaFeatEntryPoints(md, mdPrev) {
+  const LABELS = {
+    home_widget: { name: 'Home widget', where: 'Home screen · primary tiles' },
+    nav_bar:     { name: 'Bottom nav bar', where: 'Persistent navigation' },
+    spotlight:   { name: 'Spotlight cards', where: 'Home screen · promoted cards' },
+    chat:        { name: 'Genie chat entry', where: 'Chat → booking handoff' },
+  };
+
+  const collect = (src) => {
+    const rows = aaRows((src && src.dept_entry_source) || { rows: [] });
+    const hasEvt = rows.some(r => r.eventName !== undefined && r.eventName !== '');
+    const hasComplete = rows.some(r => r.eventName === 'booking_complete');
+    const acc = {};
+    rows.forEach(r => {
+      const ep = r['customEvent:entry_point'];
+      if (!ep || ep === '(not set)') return;
+      acc[ep] = acc[ep] || { starts: 0, completes: 0 };
+      if (!hasEvt || r.eventName === 'booking_start') acc[ep].starts += r.eventCount;
+      else if (r.eventName === 'booking_complete') acc[ep].completes += r.eventCount;
+    });
+    return { acc, hasComplete };
+  };
+
+  const c = collect(md), p = mdPrev ? collect(mdPrev) : { acc: {}, hasComplete: false };
+  const totalStarts = Object.values(c.acc).reduce((a, v) => a + v.starts, 0);
+
+  return Object.keys(LABELS).map(ep => {
+    const cur = c.acc[ep] || { starts: 0, completes: 0 };
+    const prv = p.acc[ep] || { starts: 0, completes: 0 };
+    const outRate = c.hasComplete ? aaFeatPct(cur.completes, cur.starts) : null;
+    const pOutRate = p.hasComplete ? aaFeatPct(prv.completes, prv.starts) : null;
+    const share = aaFeatPct(cur.starts, totalStarts);
+
+    let status = 'partial', blocker;
+    if (cur.starts === 0) {
+      status = 'blocked';
+      blocker = `No booking_start events carry entry_point="${ep}" in this window. Either the surface is unused or the parameter is not attached on this path.`;
+    } else if (!c.hasComplete) {
+      blocker = 'dept_entry_source returns booking_start only. Add booking_complete to that report in ga4.js to get conversion by entry point — this is the single change that turns discovery-surface share into discovery-surface performance.';
+    } else {
+      status = 'measured';
+      blocker = null;
+    }
+
+    return {
+      id: 'entry_' + ep, name: LABELS[ep].name, owner: 'Product', where: LABELS[ep].where,
+      status, blocker,
+      exposure:   { val: null, label: 'no impression event', rate: null },
+      exposureBlocked: 'No impression event fires when this surface is displayed, so we cannot separate "not seen" from "seen and ignored".',
+      engagement: { val: cur.starts, label: 'bookings started here', rate: share, rateLabel: 'of all attributed starts' },
+      outcome:    { val: c.hasComplete ? cur.completes : null, label: c.hasComplete ? 'completed' : 'not in report', rate: outRate, rateLabel: 'of starts from here' },
+      variance:   { verdict: 'blocked', detail: 'Add customUser:property to dept_entry_source in ga4.js.' },
+      trend: aaFeatTrend(c.hasComplete ? outRate : share, p.hasComplete ? pOutRate : aaFeatPct(prv.starts, Object.values(p.acc).reduce((a, v) => a + v.starts, 0)), 30, cur.starts, prv.starts),
+      trendOf: c.hasComplete ? 'completion rate' : 'share of starts',
+    };
+  });
+}
+
+/* Department booking flows. These are the only features where variance
+   is real today, because booking_funnel_by_hotel carries the property
+   dimension. This is where the product-vs-content verdict earns its keep. */
+function aaFeatDepartments(md, mdPrev) {
+  const DEPT_LABELS = {
+    dining: 'IRD booking flow', activity: 'Activity booking flow', spa: 'Spa booking flow',
+    restaurant: 'Restaurant booking flow', taxi: 'Taxi booking flow',
+    housekeeping: 'Housekeeping request flow', store: 'Store purchase flow',
+    bms_spa: 'BMS Spa booking flow',
+  };
+
+  const totals = (src) => {
+    const rows = aaRows((src && src.booking_funnel) || { rows: [] });
+    const acc = {};
+    rows.forEach(r => {
+      const mod = r['customEvent:source_module'];
+      if (!mod || mod === '(not set)') return;
+      acc[mod] = acc[mod] || { starts: 0, completes: 0 };
+      if (r.eventName === 'booking_start') acc[mod].starts += r.eventCount;
+      if (r.eventName === 'booking_complete') acc[mod].completes += r.eventCount;
+    });
+    return acc;
+  };
+
+  const perHotel = (src) => {
+    const rows = aaRows((src && src.booking_funnel_by_hotel) || { rows: [] });
+    const acc = {};
+    rows.forEach(r => {
+      const mod = r['customEvent:source_module'];
+      const raw = r['customUser:property'];
+      const hotel = (typeof aaCanonicalHotel === 'function') ? aaCanonicalHotel(raw) : raw;
+      if (!mod || mod === '(not set)' || !hotel) return;
+      acc[mod] = acc[mod] || {};
+      acc[mod][hotel] = acc[mod][hotel] || { starts: 0, completes: 0 };
+      if (r.eventName === 'booking_start') acc[mod][hotel].starts += r.eventCount;
+      if (r.eventName === 'booking_complete') acc[mod][hotel].completes += r.eventCount;
+    });
+    return acc;
+  };
+
+  const c = totals(md), p = mdPrev ? totals(mdPrev) : {};
+  const byHotel = perHotel(md);
+
+  return Object.keys(DEPT_LABELS)
+    .filter(mod => (c[mod] && c[mod].starts > 0))
+    .map(mod => {
+      const cur = c[mod], prv = p[mod] || { starts: 0, completes: 0 };
+      const outRate = aaFeatPct(cur.completes, cur.starts);
+      const pOutRate = aaFeatPct(prv.completes, prv.starts);
+      const variance = aaHotelId ? { verdict: 'insufficient', detail: 'Filtered to a single hotel — clear the hotel filter to see cross-hotel spread.' }
+                                 : aaFeatVariance(byHotel[mod]);
+      const zeroComplete = cur.completes === 0 && cur.starts >= 50;
+
+      return {
+        id: 'dept_' + mod, name: DEPT_LABELS[mod], owner: 'Shared (product owns flow, hotel owns catalogue)',
+        where: 'Booking funnel',
+        status: zeroComplete ? 'blocked' : 'partial',
+        blocker: zeroComplete
+          ? `${cur.starts.toLocaleString()} starts and zero completions. Treat as a tracking gap, not a 0% flow, until booking_complete is confirmed firing for this module.`
+          : 'booking_start fires on screen load, so Engagement here counts screen entries, not intent. Treat the rate as directional only.',
+        exposure:   { val: null, label: 'screen_view unreliable', rate: null },
+        exposureBlocked: 'screen_view is not firing consistently, so we cannot count how many guests reached this flow without starting it.',
+        engagement: { val: cur.starts, label: 'flows entered', rate: null },
+        outcome:    { val: cur.completes, label: 'completed', rate: outRate, rateLabel: 'of entries (GA4 view)' },
+        variance,
+        trend: aaFeatTrend(outRate, pOutRate, 50, cur.starts, prv.starts),
+        trendOf: 'completion rate',
+      };
+    })
+    .sort((a, b) => (b.engagement.val || 0) - (a.engagement.val || 0));
+}
+
+/* Product-owned surfaces with no instrumentation at all. These are not
+   inferred from data — they are a declared register, and they are the
+   most important rows on the page because they are the features
+   leadership asks about and nobody can answer. Keep in sync with the
+   engineering asks list. */
+const AA_FEAT_BLOCKED = [
+  { name: 'Home carousel', where: 'Home screen · scrolling cards', owner: 'Product',
+    blocker: 'Carousel taps route straight to booking_start and never fire a home-screen interaction. 100% of top_navigation is circular_back_button, so tap-through is invisible.',
+    ask: 'Fire click_event with label="home_carousel" and value=<card name> on every carousel tap.' },
+  { name: 'Home expandable chips', where: 'Home screen · "Breakfast options" etc.', owner: 'Product',
+    blocker: 'Chip labels in GA4 do not match the labels in the app, so taps cannot be attributed to the chip a guest actually pressed.',
+    ask: 'Send the rendered chip label verbatim as the event value.' },
+  { name: 'Reels', where: 'Global', owner: 'Product',
+    blocker: 'No play, skip, or complete events exist.',
+    ask: 'Add reel_start / reel_complete / reel_skip with reel id.' },
+  { name: 'Order history · re-order', where: 'Global', owner: 'Product',
+    blocker: 'No events on the screen, so the repeat-order path is entirely invisible.',
+    ask: 'Add click_event on re-order, and set entry_point="order_history" on the resulting booking_start.' },
+  { name: 'Active requests', where: 'Global', owner: 'Product',
+    blocker: 'Over 1,000 views and zero tracked interactions.',
+    ask: 'Add interaction events for status checks, cancels, and chases.' },
+  { name: 'Activity mood picker', where: 'Activity · "Find my Perfect Experience"', owner: 'Product',
+    blocker: 'Swipes are not tracked, so we cannot tell whether the picker helps or is skipped.',
+    ask: 'Add swipe and selection events with the chosen mood.' },
+  { name: 'Store "You may also like"', where: 'Store · product detail', owner: 'Product',
+    blocker: 'Second recommendation surface with zero tracking.',
+    ask: 'Mirror the carousel events: impression, tap, added to cart.' },
+  { name: 'Onboarding chat', where: 'Auth · first run', owner: 'Product',
+    blocker: 'Guest preference capture produces no GA4 events.',
+    ask: 'Add completion and drop-off events per onboarding step.' },
+  { name: 'Chat as an ordering channel', where: 'Genie AI chat', owner: 'Product',
+    blocker: 'Around half of dining orders are placed in chat and none of them appear in any funnel, ranking, or conversion rate on this page.',
+    ask: 'Fire booking_start / booking_complete from the chat order path with source_module and entry_point="chat".' },
+];
+
+/* ── Renderer ─────────────────────────────────────────────────────── */
+function aaFeatCell(main, sub, tone) {
+  const color = tone === 'muted' ? 'var(--text3)' : 'var(--text)';
+  return `<div style="min-width:0">
+    <div style="font-size:13px;font-weight:600;font-family:var(--serif);color:${color};line-height:1.2">${main}</div>
+    ${sub ? `<div style="font-size:9px;color:var(--text3);margin-top:2px;line-height:1.3">${sub}</div>` : ''}
+  </div>`;
+}
+
+function aaFeatTrendCell(t, ofWhat) {
+  if (!t) return aaFeatCell('—', 'no prior window', 'muted');
+  if (t.insufficient) return aaFeatCell('—', t.note, 'muted');
+  const arrow = t.dir === 'up' ? '▲' : t.dir === 'down' ? '▼' : '▬';
+  const col = t.dir === 'flat' ? 'var(--text3)' : (t.dir === 'up' ? 'var(--teal)' : 'var(--amber)');
+  return `<div style="min-width:0">
+    <div style="font-size:13px;font-weight:600;font-family:var(--serif);color:${col};line-height:1.2">${arrow} ${Math.abs(t.delta).toFixed(1)}pt</div>
+    <div style="font-size:9px;color:var(--text3);margin-top:2px;line-height:1.3">${ofWhat} · ${t.prevRate.toFixed(1)}% → ${t.currRate.toFixed(1)}%</div>
+  </div>`;
+}
+
+function aaFeatVarianceCell(v) {
+  if (!v) return aaFeatCell('—', '', 'muted');
+  const meta = AA_FEAT_VERDICT_META[v.verdict] || AA_FEAT_VERDICT_META.insufficient;
+  const toneMap = { teal: 'var(--teal)', amber: 'var(--amber)', blue: 'var(--blue)', grey: 'var(--text3)' };
+  const col = toneMap[meta.tone] || 'var(--text3)';
+  return `<div style="min-width:0">
+    <div style="font-size:10px;font-weight:600;color:${col};line-height:1.3">${meta.label}</div>
+    <div style="font-size:9px;color:var(--text3);margin-top:2px;line-height:1.3">${v.detail || ''}</div>
+  </div>`;
+}
+
+function aaFeatRow(f) {
+  const statusMeta = {
+    measured: { dot: 'var(--teal)',  label: 'Measured' },
+    partial:  { dot: 'var(--amber)', label: 'Partly measured' },
+    blocked:  { dot: 'var(--text3)', label: 'Not measurable' },
+  }[f.status] || { dot: 'var(--text3)', label: '' };
+
+  const expCell = f.exposure && f.exposure.val !== null
+    ? aaFeatCell(aaFeatNum(f.exposure.val), f.exposure.label)
+    : aaFeatCell('—', f.exposure ? f.exposure.label : 'not tracked', 'muted');
+
+  const engCell = f.engagement && f.engagement.val !== null
+    ? aaFeatCell(aaFeatNum(f.engagement.val),
+        (f.engagement.rate !== null && f.engagement.rate !== undefined ? aaFeatFmtPct(f.engagement.rate) + ' ' + (f.engagement.rateLabel || '') : f.engagement.label))
+    : aaFeatCell('—', 'not tracked', 'muted');
+
+  const outCell = f.outcome && f.outcome.val !== null
+    ? aaFeatCell(aaFeatNum(f.outcome.val),
+        (f.outcome.rate !== null && f.outcome.rate !== undefined ? aaFeatFmtPct(f.outcome.rate) + ' ' + (f.outcome.rateLabel || '') : f.outcome.label))
+    : aaFeatCell('—', f.outcome ? f.outcome.label : 'not tracked', 'muted');
+
+  return `
+  <div style="border-bottom:1px solid var(--border);padding:12px 0">
+    <div style="display:grid;grid-template-columns:1.6fr 0.9fr 0.9fr 0.9fr 1.3fr 1.1fr;gap:12px;align-items:start">
+      <div style="min-width:0">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="width:7px;height:7px;border-radius:50%;background:${statusMeta.dot};flex-shrink:0"></span>
+          <span style="font-size:12px;font-weight:500;color:var(--text)">${f.name}</span>
+        </div>
+        <div style="font-size:9px;color:var(--text3);margin-top:3px;line-height:1.4">${f.where} · owner: ${f.owner}</div>
+      </div>
+      ${expCell}
+      ${engCell}
+      ${outCell}
+      ${aaFeatVarianceCell(f.variance)}
+      ${aaFeatTrendCell(f.trend, f.trendOf)}
+    </div>
+    ${f.blocker ? `<div style="margin-top:8px;margin-left:13px;padding:7px 10px;background:var(--bg2);border-left:2px solid var(--border);border-radius:0 4px 4px 0;font-size:10px;color:var(--text2);line-height:1.5">${f.blocker}</div>` : ''}
+    ${f.exposureBlocked ? `<div style="margin-top:6px;margin-left:13px;padding:7px 10px;background:var(--bg2);border-left:2px solid var(--border);border-radius:0 4px 4px 0;font-size:10px;color:var(--text2);line-height:1.5"><strong>Exposure unavailable:</strong> ${f.exposureBlocked}</div>` : ''}
+  </div>`;
+}
+
+function aaFeatBlockedRow(b) {
+  return `
+  <div style="border-bottom:1px solid var(--border);padding:11px 0">
+    <div style="display:flex;align-items:flex-start;gap:8px">
+      <span style="width:7px;height:7px;border-radius:50%;background:var(--text3);flex-shrink:0;margin-top:5px"></span>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+          <span style="font-size:12px;font-weight:500;color:var(--text)">${b.name}</span>
+          <span style="font-size:9px;color:var(--text3)">${b.where} · owner: ${b.owner}</span>
+        </div>
+        <div style="font-size:10px;color:var(--text2);margin-top:4px;line-height:1.5">${b.blocker}</div>
+        <div style="font-size:10px;color:var(--text2);margin-top:4px;line-height:1.5"><strong>Ask:</strong> ${b.ask}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function aaRenderFeatureScorecard(md, mdPrev) {
+  const el = document.getElementById('aa-feature-body');
+  if (!el) return;
+
+  let features = [];
+  try {
+    features = features
+      .concat(aaFeatEntryPoints(md, mdPrev))
+      .concat([aaFeatCarousel(md, mdPrev), aaFeatNotifications(md, mdPrev)])
+      .concat(aaFeatDepartments(md, mdPrev));
+  } catch (e) {
+    el.innerHTML = `<div style="font-size:11px;color:var(--red);padding:8px">Feature scorecard failed to build: ${e.message}</div>`;
+    return;
+  }
+
+  const measured = features.filter(f => f.status === 'measured').length;
+  const total = features.length + AA_FEAT_BLOCKED.length;
+
+  const header = `
+    <div style="display:grid;grid-template-columns:1.6fr 0.9fr 0.9fr 0.9fr 1.3fr 1.1fr;gap:12px;padding:0 0 8px;border-bottom:1px solid var(--border)">
+      <div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Feature</div>
+      <div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Exposure</div>
+      <div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Engagement</div>
+      <div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Outcome</div>
+      <div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Product or content</div>
+      <div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Trend</div>
+    </div>`;
+
+  const summary = `
+    <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;padding:10px 12px;background:var(--bg2);border-radius:6px;margin-bottom:14px">
+      <div style="font-size:11px;color:var(--text2)">
+        <strong style="color:var(--text);font-family:var(--serif);font-size:14px">${measured}</strong> of ${total} product features fully measurable
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:9px;color:var(--text3)">
+        <span><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--teal);margin-right:4px"></span>Measured</span>
+        <span><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--amber);margin-right:4px"></span>Partly measured</span>
+        <span><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--text3);margin-right:4px"></span>Not measurable</span>
+      </div>
+      <div style="margin-left:auto;font-size:9px;color:var(--text3);max-width:340px;line-height:1.4">
+        Same app code runs at all 11 hotels. A feature that behaves the same everywhere is yours to fix; one that varies widely is content or operations.
+      </div>
+    </div>`;
+
+  const blockedSection = `
+    <div style="margin-top:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="aaFeatToggleBlocked()">
+        <div>
+          <div class="sec-lbl" style="margin:0">Product features with no instrumentation · ${AA_FEAT_BLOCKED.length}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:3px">These are not zeros. Nothing is known about them either way.</div>
+        </div>
+        <span id="aa-feat-blocked-label" style="font-size:10px;color:var(--text3)">${aaFeatShowBlocked ? 'Hide' : 'Show'}</span>
+      </div>
+      <div id="aa-feat-blocked-body" style="display:${aaFeatShowBlocked ? 'block' : 'none'};margin-top:10px">
+        ${AA_FEAT_BLOCKED.map(aaFeatBlockedRow).join('')}
+      </div>
+    </div>`;
+
+  el.innerHTML = summary + header + features.map(aaFeatRow).join('') + blockedSection;
+}
+
+function aaFeatToggleBlocked() {
+  aaFeatShowBlocked = !aaFeatShowBlocked;
+  const body = document.getElementById('aa-feat-blocked-body');
+  const label = document.getElementById('aa-feat-blocked-label');
+  if (body) body.style.display = aaFeatShowBlocked ? 'block' : 'none';
+  if (label) label.textContent = aaFeatShowBlocked ? 'Hide' : 'Show';
+}
+
 
 /* ══════════════════════════════════════════════════════════
    PHASE 2 (v49): SIGNAL GENERATOR
