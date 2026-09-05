@@ -5295,6 +5295,11 @@ async function chAggregate(){
   const selHotelIds=new Set(baseIds); // Andermatt scope now controlled globally via selH
   const buckets={}; CH_DEFS.forEach(c=>buckets[c.id]=chEmpty());
   const monthly={},guestChannels={},taskChannel={};
+  // v57 additions:
+  // hotelDeptCh[hotelId][dept][channel] = {orders, revenue}
+  // fbHotelDeptCh[hotelId][dept][channel] = {n, likes, stars[]}
+  // journey[guestId] = [{t, ch, hotelId}]  — ordered later, across ALL months
+  const hotelDeptCh={}, fbHotelDeptCh={}, journey={}, taskMeta={};
   let excludedDept=0,totalRows=0,droppedHotel=0,andermattHeld=0;
 
   for(const mk of months){
@@ -5339,15 +5344,52 @@ async function chAggregate(){
       if(status==='COMPLETED'){b.byHotel[r.hotelId].completed++;b.byHotel[r.hotelId].revenue+=val;}
       const hr=new Date(r.createdAt).getHours(); if(!isNaN(hr))b.byHour[hr]++;
       const gid=String(r.guestId||'').trim();
-      if(gid){b.guests.add(gid);b.guestOrderCounts[gid]=(b.guestOrderCounts[gid]||0)+1;(guestChannels[gid]=guestChannels[gid]||new Set()).add(ch);}
+      if(gid){b.guests.add(gid);b.guestOrderCounts[gid]=(b.guestOrderCounts[gid]||0)+1;(guestChannels[gid]=guestChannels[gid]||new Set()).add(ch);
+        // journey: keep every order with timestamp for first/repeat-channel analysis
+        (journey[gid]=journey[gid]||[]).push({t:new Date(r.createdAt).getTime(), ch, hotelId:r.hotelId});
+      }
+      // hotel × dept × channel cross-tab (orders + completed revenue)
+      const deptKey=rt;
+      const hd=(hotelDeptCh[r.hotelId]=hotelDeptCh[r.hotelId]||{});
+      const hdd=(hd[deptKey]=hd[deptKey]||{});
+      const hddc=(hdd[ch]=hdd[ch]||{orders:0,revenue:0});
+      hddc.orders++; if(status==='COMPLETED')hddc.revenue+=val;
+      taskMeta[String(r.id)]={hotelId:r.hotelId,dept:deptKey,ch};
     });
   }
   for(const mk of months){
     let fb=[]; try{fb=await getRows('feedback',mk);}catch(e){}
     fb.forEach(f=>{const ch=taskChannel[String(f.taskId||'')];if(!ch)return;const b=buckets[ch];b.fbCount++;
       const rn=String(f.reaction||'').toUpperCase(); if(rn==='LIKE'||rn==='POSITIVE')b.fbLikes++;
-      const st=parseFloat(f.star_rating); if(st>0)b.fbStars.push(st);});
+      const st=parseFloat(f.star_rating); if(st>0)b.fbStars.push(st);
+      // feedback × hotel × dept × channel
+      const tm=taskMeta[String(f.taskId||'')];
+      if(tm){
+        const h=(fbHotelDeptCh[tm.hotelId]=fbHotelDeptCh[tm.hotelId]||{});
+        const d=(h[tm.dept]=h[tm.dept]||{});
+        const c=(d[tm.ch]=d[tm.ch]||{n:0,likes:0,stars:[]});
+        c.n++; if(rn==='LIKE'||rn==='POSITIVE')c.likes++; if(st>0)c.stars.push(st);
+      }
+    });
   }
+  // ── guest journey: first-order channel + repeat same/different ──
+  // Ordered by timestamp across the full selected window. "First" = earliest
+  // order we can see for that guest in the uploaded months.
+  const firstChannel={}; CH_DEFS.forEach(c=>firstChannel[c.id]={guests:0,repeatSame:0,repeatDiff:0,noRepeat:0});
+  let journeyGuests=0, journeyRepeat=0;
+  Object.values(journey).forEach(orders=>{
+    if(!orders.length)return;
+    orders.sort((a,b)=>a.t-b.t);
+    const first=orders[0].ch;
+    firstChannel[first].guests++; journeyGuests++;
+    const later=orders.slice(1);
+    if(!later.length){ firstChannel[first].noRepeat++; return; }
+    journeyRepeat++;
+    // did ANY repeat use the same channel as first? classify by second order
+    const second=later[0].ch;
+    if(second===first) firstChannel[first].repeatSame++;
+    else firstChannel[first].repeatDiff++;
+  });
   CH_DEFS.forEach(c=>{const b=buckets[c.id];
     b.aov=b.values.length?b.revenue/b.values.length:null; b.aovBase=b.values.length;
     b.medianValue=chMedian(b.values);
@@ -5360,7 +5402,8 @@ async function chAggregate(){
   });
   const overlap={};
   Object.values(guestChannels).forEach(set=>{const key=CH_DEFS.filter(c=>set.has(c.id)).map(c=>c.id).join('+'); if(key)overlap[key]=(overlap[key]||0)+1;});
-  return {buckets,monthly,overlap,excludedDept,totalRows,droppedHotel,andermattHeld,months};
+  return {buckets,monthly,overlap,excludedDept,totalRows,droppedHotel,andermattHeld,months,
+          hotelDeptCh,fbHotelDeptCh,firstChannel,journeyGuests,journeyRepeat};
 }
 /* ── formatting ─────────────────────────────────────────────────────── */
 const chEur = v => v == null ? '—' : '€' + Math.round(v).toLocaleString();
@@ -5434,9 +5477,12 @@ function chItems(buckets) {
 function chHourly(buckets) {
   const cols = CH_DEFS.filter(c => buckets[c.id].orders > 0 && c.guest);
   const max = Math.max(1, ...cols.map(c => Math.max(...buckets[c.id].byHour)));
-  return `<div style="display:flex;gap:2px;align-items:flex-end;height:90px;margin-bottom:6px">
+  return `<div style="display:flex;gap:2px;align-items:flex-end;height:90px;margin-bottom:4px">
     ${new Array(24).fill(0).map((_, h) => `<div style="flex:1;display:flex;flex-direction:column-reverse;gap:1px;height:100%" title="${String(h).padStart(2, '0')}:00">${cols.map(c => { const v = buckets[c.id].byHour[h]; return v > 0 ? `<div style="height:${(v / max * 100).toFixed(1)}%;background:${c.col};border-radius:1px" title="${c.label} ${h}:00 — ${v}"></div>` : ''; }).join('')}</div>`).join('')}
-  </div><div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text3)"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span></div>
+  </div>
+  <div style="display:flex;gap:2px;margin-bottom:6px">
+    ${new Array(24).fill(0).map((_, h) => `<div style="flex:1;text-align:center;font-size:8px;color:var(--text3)">${h % 3 === 0 ? String(h).padStart(2,'0') : ''}</div>`).join('')}
+  </div>
   <div style="margin-top:8px;font-size:10px;color:var(--text3)">Guest channels only, stacked per hour, scaled to the busiest hour. Server time. Tests the late-night chat hypothesis directly.</div>`;
 }
 
@@ -5451,6 +5497,89 @@ function chByHotel(buckets) {
   ${rows.map(r => { const chat = r.per.chat || { orders: 0, revenue: 0, completed: 0 }; const cs = r.total ? chat.orders / r.total * 100 : 0; const ca = chat.completed && chat.revenue ? chat.revenue / chat.completed : null;
     return `<div style="${grid};padding:9px 0;border-bottom:1px solid var(--border);align-items:center"><div style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.hotel.n}</div><div style="text-align:right;font-size:12px;font-family:var(--serif);color:var(--text2)">${r.total.toLocaleString()}</div><div style="display:flex;height:16px;border-radius:3px;overflow:hidden">${cols.map(c => { const pct = r.total ? r.per[c.id].orders / r.total * 100 : 0; return pct > 0 ? `<div style="width:${pct}%;background:${c.col}" title="${c.label} ${pct.toFixed(0)}%"></div>` : ''; }).join('')}</div><div style="text-align:right;font-size:12px;font-family:var(--serif)">${chPct(cs, 0)}</div><div style="text-align:right;font-size:12px;font-family:var(--serif)">${ca == null ? '—' : chEur(ca)}</div></div>`; }).join('')}
   <div style="margin-top:9px;font-size:10px;color:var(--text3);line-height:1.5">If chat share tracks hotel performance the channel is the lever; if not, the difference is content or operations.</div>`;
+}
+
+/* Pretty dept label from an uppercase requestType key. */
+function chDeptLabel(rt){
+  const map={IN_ROOM_DINING:'In-Room Dining',HOUSEKEEPING:'Housekeeping',SPA:'SPA',RESTAURANT:'Restaurant',
+    ACTIVITY:'Activity',TAXI:'Taxi',STORE:'Store',ENGINEERING:'Engineering',FRONTDESK:'Front Desk',
+    VALET:'Valet',CONCIERGE:'Concierge',GUEST_EXPERIENCE:'Guest Experience',AMENITIES:'Amenities',LAUNDRY:'Laundry'};
+  return map[rt]||rt.split('_').map(w=>w.charAt(0)+w.slice(1).toLowerCase()).join(' ');
+}
+
+/* ── First-order channel + repeat behaviour ─────────────────────────── */
+function chFirstOrder(firstChannel, journeyGuests, journeyRepeat){
+  const cols=CH_DEFS.filter(c=>firstChannel[c.id].guests>0);
+  if(!cols.length) return `<div style="font-size:11px;color:var(--text3)">No guest journeys in range.</div>`;
+  const grid=`display:grid;grid-template-columns:1.4fr 0.9fr 1fr 1fr 1fr;gap:10px`;
+  const head=['First order via','Guests','Ordered again','Same channel','Switched'];
+  return `<div style="display:flex;gap:22px;flex-wrap:wrap;margin-bottom:12px">
+      <div><div style="font-family:var(--serif);font-size:18px;font-weight:600">${journeyGuests.toLocaleString()}</div><div style="font-size:10px;color:var(--text3)">guests with a first order</div></div>
+      <div><div style="font-family:var(--serif);font-size:18px;font-weight:600">${journeyGuests?chPct(journeyRepeat/journeyGuests*100):'—'}</div><div style="font-size:10px;color:var(--text3)">came back for a second</div></div>
+    </div>
+    <div style="${grid};padding-bottom:8px;border-bottom:1px solid var(--border)">${head.map((h,i)=>`<div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)${i?';text-align:right':''}">${h}</div>`).join('')}</div>
+    ${cols.map(c=>{const f=firstChannel[c.id];const repeated=f.repeatSame+f.repeatDiff;
+      return `<div style="${grid};padding:9px 0;border-bottom:1px solid var(--border);align-items:center">
+        <div style="display:flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:2px;background:${c.col}"></span><span style="font-size:11px;color:var(--text)">${c.label}</span></div>
+        <div style="text-align:right;font-size:12px;font-family:var(--serif)">${f.guests.toLocaleString()}</div>
+        <div style="text-align:right;font-size:12px">${repeated.toLocaleString()} <span style="font-size:9px;color:var(--text3)">${f.guests?chPct(repeated/f.guests*100,0):'—'}</span></div>
+        <div style="text-align:right;font-size:12px;color:var(--teal-d)">${repeated?chPct(f.repeatSame/repeated*100,0):'—'} <span style="font-size:9px;color:var(--text3)">${f.repeatSame}</span></div>
+        <div style="text-align:right;font-size:12px;color:var(--amber)">${repeated?chPct(f.repeatDiff/repeated*100,0):'—'} <span style="font-size:9px;color:var(--text3)">${f.repeatDiff}</span></div>
+      </div>`;}).join('')}
+    <div style="margin-top:9px;font-size:10px;color:var(--text3);line-height:1.5">"Same channel" = the guest's second order used the same channel as their first. A high switch rate means the first channel isn't sticky — guests try it once and move. Journeys span all uploaded months so "first" is a true first, not first-in-month.</div>`;
+}
+
+/* ── Hotel drill-down: pick a hotel → dept × channel ────────────────── */
+let chSelHotel = null;
+function chSetHotel(id){ chSelHotel = (chSelHotel===id?null:id); rChannels(); }
+function chHotelDrill(hotelDeptCh){
+  const hotels=H.filter(h=>selH.has(h.n)).map(h=>({h, orders:Object.values(hotelDeptCh[h.id]||{}).reduce((a,d)=>a+Object.values(d).reduce((x,c)=>x+c.orders,0),0)}))
+    .filter(x=>x.orders>0).sort((a,b)=>b.orders-a.orders);
+  if(!hotels.length) return `<div style="font-size:11px;color:var(--text3)">No orders in range.</div>`;
+  const chips=hotels.map(({h,orders})=>`<button onclick="chSetHotel('${h.id}')" style="cursor:pointer;border:1px solid ${chSelHotel===h.id?'var(--text)':'var(--border)'};background:${chSelHotel===h.id?'var(--text)':'transparent'};color:${chSelHotel===h.id?'var(--bg)':'var(--text2)'};border-radius:14px;padding:4px 11px;font-size:10px;white-space:nowrap">${h.n} <span style="opacity:.6">${orders}</span></button>`).join('');
+  let detail='';
+  const sel = chSelHotel || hotels[0].h.id;
+  const selName = (H.find(h=>h.id===sel)||{}).n||'';
+  const depts=hotelDeptCh[sel]||{};
+  const cols=CH_DEFS.slice();
+  const deptRows=Object.entries(depts).map(([dept,chs])=>({dept, chs, total:Object.values(chs).reduce((a,c)=>a+c.orders,0)}))
+    .filter(r=>r.total>0).sort((a,b)=>b.total-a.total);
+  const grid=`display:grid;grid-template-columns:1.4fr ${cols.map(()=>'1fr').join(' ')} 0.7fr;gap:10px`;
+  detail=`<div style="margin-top:14px">
+    <div style="font-size:11px;color:var(--text);font-weight:500;margin-bottom:8px">${selName} — department × channel (orders)</div>
+    <div style="${grid};padding-bottom:7px;border-bottom:1px solid var(--border)"><div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Department</div>${cols.map(c=>`<div style="font-size:10px;font-weight:600;color:${c.col};text-align:right">${c.label}</div>`).join('')}<div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);text-align:right">Total</div></div>
+    ${deptRows.map(r=>`<div style="${grid};padding:7px 0;border-bottom:1px solid var(--border);align-items:center"><div style="font-size:11px;color:var(--text2)">${chDeptLabel(r.dept)}</div>${cols.map(c=>{const o=(r.chs[c.id]||{}).orders||0;return `<div style="text-align:right;font-size:12px;color:${o?'var(--text)':'var(--text3)'}">${o||'—'}</div>`;}).join('')}<div style="text-align:right;font-size:12px;font-family:var(--serif)">${r.total}</div></div>`).join('')}
+    <div style="margin-top:8px;font-size:10px;color:var(--text3)">Highest dept×channel cell shows which service guests reach for through which channel at this hotel.</div>
+  </div>`;
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px">${chips}</div>${detail}`;
+}
+
+/* ── Feedback drill-down: pick a hotel → dept × channel satisfaction ── */
+let chFbHotel = null;
+function chSetFbHotel(id){ chFbHotel=(chFbHotel===id?null:id); rChannels(); }
+function chFeedbackDrill(fbHotelDeptCh){
+  const hotels=H.filter(h=>selH.has(h.n)).map(h=>{
+    const d=fbHotelDeptCh[h.id]||{}; let n=0; Object.values(d).forEach(dd=>Object.values(dd).forEach(c=>n+=c.n));
+    return {h,n};
+  }).filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
+  if(!hotels.length) return `<div style="font-size:11px;color:var(--text3)">No feedback could be joined to orders in range. Feedback carries a taskId but coverage is thin, so this needs more rated responses to be meaningful.</div>`;
+  const chips=hotels.map(({h,n})=>`<button onclick="chSetFbHotel('${h.id}')" style="cursor:pointer;border:1px solid ${chFbHotel===h.id?'var(--text)':'var(--border)'};background:${chFbHotel===h.id?'var(--text)':'transparent'};color:${chFbHotel===h.id?'var(--bg)':'var(--text2)'};border-radius:14px;padding:4px 11px;font-size:10px;white-space:nowrap">${h.n} <span style="opacity:.6">${n}</span></button>`).join('');
+  const sel=chFbHotel||hotels[0].h.id;
+  const selName=(H.find(h=>h.id===sel)||{}).n||'';
+  const depts=fbHotelDeptCh[sel]||{};
+  const cols=CH_DEFS.slice();
+  const rows=Object.entries(depts).map(([dept,chs])=>({dept,chs,n:Object.values(chs).reduce((a,c)=>a+c.n,0)})).filter(r=>r.n>0).sort((a,b)=>b.n-a.n);
+  const grid=`display:grid;grid-template-columns:1.4fr ${cols.map(()=>'1fr').join(' ')};gap:10px`;
+  const cell=c=>{ if(!c||!c.n) return `<span style="color:var(--text3)">—</span>`;
+    const star=c.stars.length?(c.stars.reduce((a,s)=>a+s,0)/c.stars.length).toFixed(1)+'★':'';
+    const like=chPct(c.likes/c.n*100,0);
+    return `<span style="font-size:11px;color:var(--text)">${star||like}</span> <span style="font-size:9px;color:var(--text3)">n=${c.n}</span>`;
+  };
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${chips}</div>
+    <div style="font-size:11px;color:var(--text);font-weight:500;margin-bottom:8px">${selName} — satisfaction by department × channel</div>
+    <div style="${grid};padding-bottom:7px;border-bottom:1px solid var(--border)"><div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Department</div>${cols.map(c=>`<div style="font-size:10px;font-weight:600;color:${c.col};text-align:right">${c.label}</div>`).join('')}</div>
+    ${rows.map(r=>`<div style="${grid};padding:7px 0;border-bottom:1px solid var(--border);align-items:center"><div style="font-size:11px;color:var(--text2)">${chDeptLabel(r.dept)}</div>${cols.map(c=>`<div style="text-align:right">${cell(r.chs[c.id])}</div>`).join('')}</div>`).join('')}
+    <div style="margin-top:9px;font-size:10px;color:var(--text3);line-height:1.5">Shows avg star rating where rated, else like-rate. Most cells are low-n — feedback join coverage is thin, so read these as hints. A channel that consistently underperforms on satisfaction within a dept is the signal to look for.</div>`;
 }
 
 function chOverlap(overlap) {
@@ -5479,7 +5608,8 @@ async function rChannels() {
   if (!selM.size) { if (sub) sub.textContent = 'Upload tasks XLS to load'; body.innerHTML = emptyState('Upload monthly task reports to see the channel split'); return; }
   body.innerHTML = `<div class="fu-loading"><div class="fu-spinner"></div>Reading order sources...</div>`;
   let agg; try { agg = await chAggregate(); } catch (e) { body.innerHTML = `<div style="font-size:11px;color:var(--red);padding:10px">Channel analysis failed: ${e.message}</div>`; return; }
-  const { buckets, monthly, overlap, excludedDept, totalRows, droppedHotel, andermattHeld, months } = agg;
+  const { buckets, monthly, overlap, excludedDept, totalRows, droppedHotel, andermattHeld, months,
+          hotelDeptCh, fbHotelDeptCh, firstChannel, journeyGuests, journeyRepeat } = agg;
   const period = selM.size === 1 ? fmtMonth([...selM][0]) : `${selM.size} months`;
   if (sub) sub.textContent = `${period} · ${totalRows.toLocaleString()} valid orders · split by createdBy.source`;
   if (!totalRows) { body.innerHTML = emptyState('No valid orders for the selected months and hotels'); return; }
@@ -5498,20 +5628,22 @@ async function rChannels() {
       </div>
   </div>`;
 
-  const caveat = `<div style="padding:9px 12px;background:var(--bg2);border-left:2px solid var(--amber);border-radius:0 5px 5px 0;font-size:10px;color:var(--text2);line-height:1.55;margin-bottom:16px">
-    <strong>Matches the monthly Area GM deck.</strong> Same math as the report generator: revenue = completed IN-ROOM DINING + SPA + STORE only (IRD/Store use header total; SPA uses total or sum of item price×guests). Valet, Concierge and Guest Experience are excluded entirely. Engineering is excluded from fulfilment-time and SLA only. No conversion rate — the backend records orders placed, not attempted.
-    ${excludedDept ? `<br><br>${excludedDept.toLocaleString()} Valet/Concierge/Guest-Experience order(s) excluded per report policy.` : ''}
-    ${andermattHeld ? `<br>${andermattHeld.toLocaleString()} The Chedi Andermatt order(s) held out (not in the monthly deck's 11-hotel scope). Toggle above to include.` : ''}
+  // conversion-rate box removed per request; kept a one-line source note only
+  const caveat = `<div style="font-size:10px;color:var(--text3);line-height:1.5;margin-bottom:16px">
+    From uploaded task reports, same math as the monthly Area GM deck. Revenue = completed In-Room Dining + SPA + Store.
+    ${excludedDept ? `${excludedDept.toLocaleString()} Valet/Concierge/Guest-Experience orders excluded per report policy. ` : ''}${andermattHeld ? `${andermattHeld.toLocaleString()} Andermatt orders held out — toggle in the filter bar to include.` : ''}
   </div>`;
 
   const sec = (t, s, c) => `<div style="margin-top:24px"><div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text2);font-weight:500">${t}</div>${s ? `<div style="font-size:10px;color:var(--text3);margin-top:2px;margin-bottom:10px">${s}</div>` : '<div style="height:10px"></div>'}${c}</div>`;
 
   body.innerHTML = headline + caveat + chShareBar(buckets, 'orders')
     + sec('Channel comparison', 'Volume, money, fulfilment, guest behaviour and satisfaction side by side', chComparison(buckets))
+    + sec('First order & repeat behaviour', 'Which channel guests start with, and whether they come back through the same one', chFirstOrder(firstChannel, journeyGuests, journeyRepeat))
     + sec('What each channel is used for', 'Request-type mix within each channel', chTypeMix(buckets))
     + sec('Top items by channel', 'What guests actually order through each guest channel', chItems(buckets))
     + sec('When guests order', 'Hourly distribution, guest channels', chHourly(buckets))
-    + sec('Channel mix by hotel', 'Does chat adoption track hotel performance?', chByHotel(buckets))
+    + sec('Channel mix by hotel', 'Pick a hotel to see which department is ordered through which channel', chHotelDrill(hotelDeptCh))
+    + sec('Satisfaction by channel', 'Pick a hotel to see department × channel feedback', chFeedbackDrill(fbHotelDeptCh))
     + sec('Guests using more than one channel', 'Overlap across the selected period', chOverlap(overlap))
     + sec('How the mix is shifting', 'Share of orders by month', chTrend(monthly, months));
 }
