@@ -1446,6 +1446,7 @@ const H = [
   {n:"Ali Pasha",                          id:"8d07caa9-dae4-46c8-83b3-52cb1514dcad", st:"Live",  col:"#EF9F27"},
   {n:"Fanadir",                            id:"6c24b105-513a-490e-a46b-1f17c2f62502", st:"Live",  col:"#888780"},
   {n:"Turtle's Inn",                       id:"9f06c608-41af-40ff-a105-2ed21dd9bbeb", st:"Live",  col:"#A8A69E"},
+  {n:"The Chedi Andermatt",                id:"2bb8b4b5-e14d-496b-9f20-1891eb1bdf20", st:"Live",  col:"#5B7C99"},
 ];
 const HOTEL_BY_ID = Object.fromEntries(H.map(h=>[h.id,h]));
 
@@ -5096,470 +5097,383 @@ async function aaLoad(force = false) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════
-   CHANNEL ANALYSIS (v54)
+   CHANNEL ANALYSIS (v55) — corrected against real Aug 2026 export
    ─────────────────────────────────────────────────────────────────────
-   Orders split by createdBy.source — app, in-app chat, WhatsApp, staff.
+   Findings that drove this rewrite (verified against tasks_Aug2026.xlsx):
 
-   WHY THIS IS A BACKEND PAGE, NOT A GA4 PAGE
-   Chat orders fire no booking_start / booking_complete, so GA4 cannot see
-   roughly half of dining volume (engineering ask #6). The backend task
-   feed carries createdBy.source on every order, so the channel question
-   is fully answerable today — and answerable with revenue attached,
-   which GA4 could not give us even if ask #6 shipped.
+   • FOUR channels, not the three I assumed. createdBy.source =
+       LUNA (staff, has roleId) · GENIE (guest app) ·
+       GENIE_CHAT (guest chat) · GENIE_WHATSAPP (guest WhatsApp)
+     LUNA is the biggest single source (57%) and is STAFF — every LUNA
+     row carries a roleId and maps to ~102 named staff. The guest sources
+     carry userId but no roleId.
 
-   THE ONE COMPARISON THIS PAGE MUST NEVER MAKE
-   Channel *conversion rate*. Backend records orders placed, not orders
-   attempted. There is no chat equivalent of booking_start. Any
-   "chat converts better than the app" claim would be comparing a
-   numerator with no denominator against a denominator inflated by
-   screen loads. Volume, revenue, AOV, fulfilment and cancellation are
-   all sound. Conversion is not, and is deliberately absent.
+   • metadata comes in TWO formats depending on export vintage:
+       Python-repr:  {'totalAmount': Decimal('41'), 'items':[...]}
+       DynamoDB-JSON: {"totalAmount":{"N":"41"}, ...}
+     chMetaParse handles both. The flattened metadata.totalAmount column
+     is reliable when present; the blob is the fallback and the only
+     source of item-level detail.
 
-   Reads raw rows via getRows('tasks', month) — works on existing
-   uploads, no re-upload or summary rebuild needed.
+   • paymentMethod is NOT populated — that metric is dropped.
+   • feedback rows carry taskId, so guest satisfaction can be joined to
+     the channel that produced the order. New metric, only possible now.
+
+   Still no conversion rate: backend records orders placed, not attempted.
 ══════════════════════════════════════════════════════════════════════ */
 
-/* Channel definitions. GENIE_CHAT and GENIE_WHATSAPP stay SPLIT — they are
-   different products in different guest contexts and merging them hides
-   the more interesting of the two. */
 const CH_DEFS = [
-  { id: 'app',      label: 'App',            sources: ['GENIE'],           col: '#185FA5', guest: true,
-    note: 'Ordered through the app UI — menu, spotlight, widgets' },
-  { id: 'chat',     label: 'Genie chat',     sources: ['GENIE_CHAT'],      col: '#1D9E75', guest: true,
-    note: 'Ordered in conversation with Genie inside the app' },
-  { id: 'whatsapp', label: 'WhatsApp',       sources: ['GENIE_WHATSAPP'],  col: '#BA7517', guest: true,
-    note: 'Ordered over WhatsApp — no app session required' },
-  { id: 'staff',    label: 'Staff-raised',   sources: null,                col: '#888780', guest: false,
-    note: 'Raised by hotel staff on the guest\'s behalf — phone, front desk, in person' },
+  { id: 'app',      label: 'App',          sources: ['GENIE'],          col: '#185FA5', guest: true,
+    note: 'Guest ordered through the app UI' },
+  { id: 'chat',     label: 'Genie chat',   sources: ['GENIE_CHAT'],     col: '#1D9E75', guest: true,
+    note: 'Guest ordered in conversation with Genie' },
+  { id: 'whatsapp', label: 'WhatsApp',     sources: ['GENIE_WHATSAPP'], col: '#BA7517', guest: true,
+    note: 'Guest ordered over WhatsApp — no app session needed' },
+  { id: 'staff',    label: 'Staff (Luna)', sources: ['LUNA'],           col: '#888780', guest: false,
+    note: 'Raised by hotel staff in the Luna console on the guest\'s behalf' },
 ];
-const CH_GUEST_SOURCES = new Set(['GENIE', 'GENIE_CHAT', 'GENIE_WHATSAPP']);
 
 function chChannelOf(row) {
   const s = String(row['createdBy.source'] || '').toUpperCase().trim();
   if (s === 'GENIE') return 'app';
   if (s === 'GENIE_CHAT') return 'chat';
   if (s === 'GENIE_WHATSAPP') return 'whatsapp';
-  return 'staff';
+  if (s === 'LUNA') return 'staff';
+  return 'staff'; // blank / unknown falls in with staff, counted separately
+}
+function chIsUnknownSource(row) {
+  const s = String(row['createdBy.source'] || '').toUpperCase().trim();
+  return !['GENIE', 'GENIE_CHAT', 'GENIE_WHATSAPP', 'LUNA'].includes(s);
+}
+
+/* Parse metadata in either format. Returns {} on failure — never throws. */
+function chMetaParse(raw) {
+  if (!raw) return {};
+  if (typeof raw === 'object') return chDynFlatten(raw);
+  if (typeof raw !== 'string') return {};
+  const s = raw.trim();
+  // DynamoDB-JSON: starts with { and contains "N": / "S": typed wrappers
+  if (s.indexOf('"N"') !== -1 || s.indexOf('"S"') !== -1 || s.indexOf('"M"') !== -1) {
+    try { return chDynFlatten(JSON.parse(s)); } catch (e) { /* fall through */ }
+  }
+  // Python-repr: Decimal('x'), single quotes, True/False/None
+  try {
+    let t = s
+      .replace(/Decimal\('([\d.]+)'\)/g, '$1')
+      .replace(/\bTrue\b/g, 'true').replace(/\bFalse\b/g, 'false').replace(/\bNone\b/g, 'null')
+      .replace(/'/g, '"');
+    return JSON.parse(t);
+  } catch (e) { return {}; }
+}
+/* Collapse DynamoDB typed values ({"N":"5"} -> 5) recursively. */
+function chDynFlatten(v) {
+  if (Array.isArray(v)) return v.map(chDynFlatten);
+  if (v && typeof v === 'object') {
+    const keys = Object.keys(v);
+    if (keys.length === 1 && ['N', 'S', 'BOOL', 'L', 'M'].includes(keys[0])) {
+      const k = keys[0], inner = v[k];
+      if (k === 'N') { const n = parseFloat(inner); return isNaN(n) ? 0 : n; }
+      if (k === 'S' || k === 'BOOL') return inner;
+      if (k === 'L') return (inner || []).map(chDynFlatten);
+      if (k === 'M') return chDynFlatten(inner);
+    }
+    const out = {};
+    keys.forEach(k => { out[k] = chDynFlatten(v[k]); });
+    return out;
+  }
+  return v;
+}
+
+/* Revenue-bearing departments only. Per dashboard rule, revenue applies
+   solely to in-room dining, spa and store — an amount on any other
+   request type (e.g. a TAXI fare) is NOT counted as order revenue.
+   Verified requestType vocabulary: exact strings are IN_ROOM_DINING,
+   SPA, STORE. */
+const CH_REVENUE_DEPTS = new Set(['IN_ROOM_DINING', 'SPA', 'STORE']);
+
+/* Order value: 0 unless the request type is revenue-bearing. Then
+   flattened column first (reliable when >0), blob totalAmount next, and
+   for SPA the price * numberOfGuests fallback when totalAmount is zero. */
+function chOrderValue(row, meta) {
+  const type = String(row.requestType || '').toUpperCase().replace(/ /g, '_');
+  if (!CH_REVENUE_DEPTS.has(type)) return 0;
+  const flat = parseFloat(row['metadata.totalAmount']);
+  if (flat > 0) return flat;
+  const m = meta || chMetaParse(row.metadata);
+  const ta = parseFloat(m.totalAmount);
+  if (ta > 0) return ta;
+  // SPA stores price * numberOfGuests when totalAmount is zero
+  if (type === 'SPA') {
+    const price = parseFloat(m.price);
+    if (price > 0) { const g = parseFloat(m.numberOfGuests) || 1; return price * g; }
+  }
+  return 0;
 }
 
 function chMedian(arr) {
   if (!arr.length) return null;
-  const s = [...arr].sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
+  const s = [...arr].sort((a, b) => a - b), m = Math.floor(s.length / 2);
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
-
-function chEmptyBucket() {
-  return {
-    orders: 0, completed: 0, cancelled: 0, delayed: 0, escalated: 0,
-    revenue: 0, revenueCancelled: 0, values: [],
+function chEmpty() {
+  return { orders: 0, completed: 0, cancelled: 0, delayed: 0, escalated: 0,
+    revenue: 0, revenueCancelled: 0, deliveryRev: 0, values: [],
     fulfilMins: [], slaBreach: 0, slaTotal: 0,
     byType: {}, byHour: new Array(24).fill(0), byHotel: {},
-    guests: new Set(), guestOrderCounts: {},
-  };
+    items: {}, guests: new Set(), guestOrderCounts: {},
+    fbCount: 0, fbLikes: 0, fbStars: [] };
 }
 
-/* ── Core aggregation ──────────────────────────────────────────────────
-   One pass over raw task rows. Applies the same validity, month and
-   hotel filters the rest of the dashboard uses, so numbers reconcile
-   with the Tasks and Revenue pages.                                    */
+/* ── Aggregation over raw task rows ─────────────────────────────────── */
 async function chAggregate() {
   const months = [...selM];
   const selHotelIds = new Set(H.filter(h => selH.has(h.n)).map(h => h.id));
-
-  const buckets = {};
-  CH_DEFS.forEach(c => { buckets[c.id] = chEmptyBucket(); });
-  const monthly = {};        // monthKey -> { channelId: orders }
-  const guestChannels = {};  // guestId  -> Set(channelId)
-  let unknownSource = 0, totalRows = 0;
+  const buckets = {}; CH_DEFS.forEach(c => buckets[c.id] = chEmpty());
+  const monthly = {}, guestChannels = {}, taskChannel = {};
+  let unknownSource = 0, totalRows = 0, droppedHotel = 0;
 
   for (const mk of months) {
     const rows = await getRows('tasks', mk);
-    monthly[mk] = {};
-    CH_DEFS.forEach(c => { monthly[mk][c.id] = 0; });
+    monthly[mk] = {}; CH_DEFS.forEach(c => monthly[mk][c.id] = 0);
 
     rows.forEach(r => {
       if (!validTask(r) || !createdAtMonth(r, mk)) return;
-      if (!selHotelIds.has(r.hotelId)) return;
+      if (!selHotelIds.has(r.hotelId)) { droppedHotel++; return; }
       totalRows++;
-
-      const ch = chChannelOf(r);
-      const b = buckets[ch];
-      const rawSrc = String(r['createdBy.source'] || '').toUpperCase().trim();
-      if (!rawSrc) unknownSource++;
-
-      b.orders++;
-      monthly[mk][ch]++;
+      const ch = chChannelOf(r), b = buckets[ch];
+      if (chIsUnknownSource(r)) unknownSource++;
+      b.orders++; monthly[mk][ch]++;
+      taskChannel[String(r.id)] = ch;
 
       const status = String(r.status || '').toUpperCase();
-      const rev = extractRevenue(r);
+      const meta = chMetaParse(r.metadata);
+      const val = chOrderValue(r, meta);
       const tags = String(r.tags || '');
 
       if (status === 'COMPLETED') {
         b.completed++;
-        b.revenue += rev;
-        if (rev > 0) b.values.push(rev);
+        if (val > 0) { b.revenue += val; b.values.push(val); }
+        (Array.isArray(meta.otherCharges) ? meta.otherCharges : []).forEach(oc => { const p = parseFloat(oc && oc.price); if (p > 0) b.deliveryRev += p; });
+        (Array.isArray(meta.items) ? meta.items : []).forEach(it => {
+          if (it && it.name) { const q = parseInt(it.quantity) || 1; b.items[it.name] = (b.items[it.name] || 0) + q; }
+        });
+        if (r.createdAt && r.lastStatusUpdatedAt) {
+          const mins = (new Date(r.lastStatusUpdatedAt) - new Date(r.createdAt)) / 60000;
+          if (!isNaN(mins) && mins >= 0 && mins < 1440) {
+            b.fulfilMins.push(mins);
+            const dept = String(r.requestType || '').toUpperCase().replace(/ /g, '_');
+            const sla = (SLA_CONFIG[r.hotelId] || {})[dept];
+            if (sla) { b.slaTotal++; if (mins > sla) b.slaBreach++; }
+          }
+        }
       } else if (status === 'CANCELLED') {
-        b.cancelled++;
-        b.revenueCancelled += rev;
+        b.cancelled++; if (val > 0) b.revenueCancelled += val;
       }
       if (tags.includes('DELAYED')) b.delayed++;
       if (tags.includes('ESCALATED')) b.escalated++;
-
-      // fulfilment time + SLA, completed orders only
-      if (status === 'COMPLETED' && r.createdAt && r.lastStatusUpdatedAt) {
-        const mins = (new Date(r.lastStatusUpdatedAt) - new Date(r.createdAt)) / 60000;
-        if (!isNaN(mins) && mins >= 0 && mins < 24 * 60) {
-          b.fulfilMins.push(mins);
-          const dept = String(r.requestType || '').toUpperCase().replace(/ /g, '_');
-          const slaMins = (SLA_CONFIG[r.hotelId] || {})[dept];
-          if (slaMins) { b.slaTotal++; if (mins > slaMins) b.slaBreach++; }
-        }
-      }
 
       const type = r.requestType || 'UNKNOWN';
       b.byType[type] = (b.byType[type] || 0) + 1;
       b.byHotel[r.hotelId] = b.byHotel[r.hotelId] || { orders: 0, revenue: 0, completed: 0 };
       b.byHotel[r.hotelId].orders++;
-      if (status === 'COMPLETED') { b.byHotel[r.hotelId].completed++; b.byHotel[r.hotelId].revenue += rev; }
-
-      const hr = new Date(r.createdAt).getHours();
-      if (!isNaN(hr)) b.byHour[hr]++;
-
+      if (status === 'COMPLETED') { b.byHotel[r.hotelId].completed++; b.byHotel[r.hotelId].revenue += val; }
+      const hr = new Date(r.createdAt).getHours(); if (!isNaN(hr)) b.byHour[hr]++;
       const gid = String(r.guestId || '').trim();
-      if (gid) {
-        b.guests.add(gid);
-        b.guestOrderCounts[gid] = (b.guestOrderCounts[gid] || 0) + 1;
-        guestChannels[gid] = guestChannels[gid] || new Set();
-        guestChannels[gid].add(ch);
-      }
+      if (gid) { b.guests.add(gid); b.guestOrderCounts[gid] = (b.guestOrderCounts[gid] || 0) + 1;
+        (guestChannels[gid] = guestChannels[gid] || new Set()).add(ch); }
     });
   }
 
-  // derived per-channel figures
+  // join feedback -> channel via taskId (guest satisfaction by channel)
+  for (const mk of months) {
+    let fb = []; try { fb = await getRows('feedback', mk); } catch (e) {}
+    fb.forEach(f => {
+      const ch = taskChannel[String(f.taskId || '')]; if (!ch) return;
+      const b = buckets[ch]; b.fbCount++;
+      const reaction = String(f.reaction || '').toUpperCase();
+      if (reaction === 'LIKE' || reaction === 'POSITIVE') b.fbLikes++;
+      const st = parseFloat(f.star_rating); if (st > 0) b.fbStars.push(st);
+    });
+  }
+
   CH_DEFS.forEach(c => {
     const b = buckets[c.id];
-    b.aov          = b.completed > 0 && b.revenue > 0 ? b.revenue / b.values.length : null;
-    b.aovBase      = b.values.length;
-    b.compPct      = b.orders > 0 ? b.completed / b.orders * 100 : null;
-    b.cancPct      = b.orders > 0 ? b.cancelled / b.orders * 100 : null;
-    b.delayedPct   = b.orders > 0 ? b.delayed / b.orders * 100 : null;
-    b.escalatedPct = b.orders > 0 ? b.escalated / b.orders * 100 : null;
+    b.aov = b.values.length ? b.revenue / b.values.length : null;
+    b.aovBase = b.values.length;
+    b.medianValue = chMedian(b.values);
+    b.compPct = b.orders ? b.completed / b.orders * 100 : null;
+    b.cancPct = b.orders ? b.cancelled / b.orders * 100 : null;
+    b.delayedPct = b.orders ? b.delayed / b.orders * 100 : null;
+    b.escalatedPct = b.orders ? b.escalated / b.orders * 100 : null;
     b.medianFulfil = chMedian(b.fulfilMins);
-    b.slaBreachPct = b.slaTotal > 0 ? b.slaBreach / b.slaTotal * 100 : null;
-    b.revPerOrder  = b.completed > 0 ? b.revenue / b.completed : null;
+    b.slaBreachPct = b.slaTotal ? b.slaBreach / b.slaTotal * 100 : null;
     b.uniqueGuests = b.guests.size;
-    b.ordersPerGuest = b.guests.size > 0 ? b.orders / b.guests.size : null;
+    b.ordersPerGuest = b.guests.size ? b.orders / b.guests.size : null;
     const counts = Object.values(b.guestOrderCounts);
+    b.repeatPct = counts.length ? counts.filter(n => n > 1).length / counts.length * 100 : null;
     b.repeatGuests = counts.filter(n => n > 1).length;
-    b.repeatPct    = counts.length > 0 ? b.repeatGuests / counts.length * 100 : null;
-    b.medianValue  = chMedian(b.values);
+    b.fbLikePct = b.fbCount ? b.fbLikes / b.fbCount * 100 : null;
+    b.avgStars = b.fbStars.length ? b.fbStars.reduce((a, s) => a + s, 0) / b.fbStars.length : null;
   });
 
-  // cross-channel guest overlap
   const overlap = {};
   Object.values(guestChannels).forEach(set => {
     const key = CH_DEFS.filter(c => set.has(c.id)).map(c => c.id).join('+');
-    if (!key) return;
-    overlap[key] = (overlap[key] || 0) + 1;
+    if (key) overlap[key] = (overlap[key] || 0) + 1;
   });
-
-  return { buckets, monthly, overlap, unknownSource, totalRows, months, selHotelIds };
+  return { buckets, monthly, overlap, unknownSource, totalRows, droppedHotel, months };
 }
 
-/* ── Rendering helpers ─────────────────────────────────────────────── */
+/* ── formatting ─────────────────────────────────────────────────────── */
 const chEur = v => v == null ? '—' : '€' + Math.round(v).toLocaleString();
 const chPct = (v, dp) => v == null ? '—' : v.toFixed(dp === undefined ? 1 : dp) + '%';
-const chMins = v => {
-  if (v == null) return '—';
-  if (v < 60) return Math.round(v) + 'm';
-  const h = Math.floor(v / 60), m = Math.round(v % 60);
-  return h + 'h' + (m ? ' ' + m + 'm' : '');
-};
-const CH_MIN_BASE = 30;  // below this, rates are noise
+const chMins = v => v == null ? '—' : (v < 60 ? Math.round(v) + 'm' : Math.floor(v / 60) + 'h' + (Math.round(v % 60) ? ' ' + Math.round(v % 60) + 'm' : ''));
+const CH_MIN_BASE = 30;
 
-function chLowBase(n) {
-  return n < CH_MIN_BASE
-    ? ` <span style="font-size:9px;color:var(--text3)" title="Fewer than ${CH_MIN_BASE} orders — rate is unstable">·low n</span>`
-    : '';
-}
-
-function chShareBar(buckets) {
-  const total = CH_DEFS.reduce((a, c) => a + buckets[c.id].orders, 0);
+function chShareBar(buckets, metric) {
+  const total = CH_DEFS.reduce((a, c) => a + (metric === 'rev' ? buckets[c.id].revenue : buckets[c.id].orders), 0);
   if (!total) return '';
-  const live = CH_DEFS.filter(c => buckets[c.id].orders > 0);
+  const live = CH_DEFS.filter(c => (metric === 'rev' ? buckets[c.id].revenue : buckets[c.id].orders) > 0);
   return `
   <div style="display:flex;height:30px;border-radius:5px;overflow:hidden;margin-bottom:12px">
-    ${live.map(c => {
-      const pct = buckets[c.id].orders / total * 100;
-      return `<div title="${c.label}: ${buckets[c.id].orders.toLocaleString()} orders" style="width:${pct}%;background:${c.col};display:flex;align-items:center;justify-content:center">
-        ${pct > 7 ? `<span style="font-size:11px;font-weight:600;color:#fff">${pct.toFixed(0)}%</span>` : ''}
-      </div>`;
-    }).join('')}
+    ${live.map(c => { const val = metric === 'rev' ? buckets[c.id].revenue : buckets[c.id].orders; const pct = val / total * 100;
+      return `<div title="${c.label}: ${metric==='rev'?chEur(val):val.toLocaleString()}" style="width:${pct}%;background:${c.col};display:flex;align-items:center;justify-content:center">${pct > 6 ? `<span style="font-size:11px;font-weight:600;color:#fff">${pct.toFixed(0)}%</span>` : ''}</div>`; }).join('')}
   </div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:4px">
-    ${live.map(c => `
-      <div style="display:flex;align-items:baseline;gap:7px">
-        <span style="width:8px;height:8px;border-radius:2px;background:${c.col};flex-shrink:0"></span>
-        <div style="min-width:0">
-          <div style="font-size:11px;color:var(--text)">${c.label}</div>
-          <div style="font-size:9px;color:var(--text3);margin-top:1px">${buckets[c.id].orders.toLocaleString()} orders · ${chEur(buckets[c.id].revenue)}</div>
-        </div>
-      </div>`).join('')}
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:10px;margin-bottom:4px">
+    ${live.map(c => `<div style="display:flex;align-items:baseline;gap:7px"><span style="width:8px;height:8px;border-radius:2px;background:${c.col};flex-shrink:0"></span><div style="min-width:0"><div style="font-size:11px;color:var(--text)">${c.label}</div><div style="font-size:9px;color:var(--text3);margin-top:1px">${buckets[c.id].orders.toLocaleString()} orders · ${chEur(buckets[c.id].revenue)}</div></div></div>`).join('')}
   </div>`;
 }
 
-/* Main comparison table — the core of the page. */
-function chComparisonTable(buckets) {
+function chComparison(buckets) {
   const cols = CH_DEFS.filter(c => buckets[c.id].orders > 0);
+  const lowN = n => n < CH_MIN_BASE ? ` <span style="font-size:9px;color:var(--text3)">·low n</span>` : '';
   const ROWS = [
-    { k: 'Orders',              f: b => b.orders.toLocaleString(), strong: true },
-    { k: 'Completed',           f: b => `${b.completed.toLocaleString()} <span style="color:var(--text3);font-size:10px">${chPct(b.compPct)}</span>` },
-    { k: 'Cancelled',           f: b => `${b.cancelled.toLocaleString()} <span style="color:var(--text3);font-size:10px">${chPct(b.cancPct)}</span>${chLowBase(b.orders)}` },
-    { k: 'Revenue',             f: b => chEur(b.revenue), strong: true, gap: true },
-    { k: 'Average order value', f: b => b.aov == null ? '—' : `${chEur(b.aov)} <span style="color:var(--text3);font-size:10px">n=${b.aovBase}</span>`, strong: true },
-    { k: 'Median order value',  f: b => chEur(b.medianValue) },
+    { k: 'Orders', f: b => b.orders.toLocaleString(), strong: 1 },
+    { k: 'Completed', f: b => `${b.completed.toLocaleString()} <span style="color:var(--text3);font-size:10px">${chPct(b.compPct)}</span>` },
+    { k: 'Cancelled', f: b => `${b.cancelled.toLocaleString()} <span style="color:var(--text3);font-size:10px">${chPct(b.cancPct)}</span>${lowN(b.orders)}` },
+    { k: 'Revenue', f: b => chEur(b.revenue), strong: 1, gap: 1 },
+    { k: 'Avg order value', f: b => b.aov == null ? '—' : `${chEur(b.aov)} <span style="color:var(--text3);font-size:10px">n=${b.aovBase}</span>`, strong: 1 },
+    { k: 'Median order value', f: b => chEur(b.medianValue) },
+    { k: 'Delivery-charge revenue', f: b => chEur(b.deliveryRev) },
     { k: 'Revenue lost to cancellations', f: b => chEur(b.revenueCancelled) },
-    { k: 'Median time to fulfil', f: b => chMins(b.medianFulfil), gap: true },
-    { k: 'SLA breach rate',     f: b => b.slaBreachPct == null ? '—' : `${chPct(b.slaBreachPct)} <span style="color:var(--text3);font-size:10px">n=${b.slaTotal}</span>` },
-    { k: 'Delayed',             f: b => chPct(b.delayedPct) },
-    { k: 'Escalated',           f: b => chPct(b.escalatedPct) },
-    { k: 'Unique guests',       f: b => b.uniqueGuests.toLocaleString(), gap: true },
-    { k: 'Orders per guest',    f: b => b.ordersPerGuest == null ? '—' : b.ordersPerGuest.toFixed(2) },
-    { k: 'Guests ordering more than once', f: b => b.repeatPct == null ? '—' : `${chPct(b.repeatPct)} <span style="color:var(--text3);font-size:10px">${b.repeatGuests}/${b.uniqueGuests}</span>` },
+    { k: 'Median time to fulfil', f: b => chMins(b.medianFulfil), gap: 1 },
+    { k: 'SLA breach rate', f: b => b.slaBreachPct == null ? '—' : `${chPct(b.slaBreachPct)} <span style="color:var(--text3);font-size:10px">n=${b.slaTotal}</span>` },
+    { k: 'Delayed', f: b => chPct(b.delayedPct) },
+    { k: 'Escalated', f: b => chPct(b.escalatedPct) },
+    { k: 'Unique guests', f: b => b.uniqueGuests.toLocaleString(), gap: 1 },
+    { k: 'Orders per guest', f: b => b.ordersPerGuest == null ? '—' : b.ordersPerGuest.toFixed(2) },
+    { k: 'Repeat guests', f: b => b.repeatPct == null ? '—' : `${chPct(b.repeatPct)} <span style="color:var(--text3);font-size:10px">${b.repeatGuests}/${b.uniqueGuests}</span>` },
+    { k: 'Guest satisfaction (likes)', f: b => b.fbLikePct == null ? '—' : `${chPct(b.fbLikePct)} <span style="color:var(--text3);font-size:10px">n=${b.fbCount}</span>`, gap: 1 },
+    { k: 'Avg star rating', f: b => b.avgStars == null ? '—' : `${b.avgStars.toFixed(2)}★ <span style="color:var(--text3);font-size:10px">n=${b.fbStars.length}</span>` },
   ];
-
-  const grid = `display:grid;grid-template-columns:1.5fr ${cols.map(() => '1fr').join(' ')};gap:10px`;
-
-  return `
-  <div style="${grid};padding-bottom:8px;border-bottom:1px solid var(--border)">
-    <div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Metric</div>
-    ${cols.map(c => `<div style="font-size:10px;font-weight:600;color:${c.col};text-align:right">${c.label}</div>`).join('')}
-  </div>
-  ${ROWS.map(row => `
-    <div style="${grid};padding:${row.gap ? '13px' : '7px'} 0 7px;border-bottom:1px solid var(--border)${row.gap ? ';border-top:1px solid var(--border);margin-top:4px' : ''}">
-      <div style="font-size:11px;color:var(--text2)">${row.k}</div>
-      ${cols.map(c => `<div style="text-align:right;font-size:${row.strong ? '13' : '12'}px;${row.strong ? 'font-weight:600;font-family:var(--serif);' : ''}color:var(--text)">${row.f(buckets[c.id])}</div>`).join('')}
-    </div>`).join('')}`;
+  const grid = `display:grid;grid-template-columns:1.6fr ${cols.map(() => '1fr').join(' ')};gap:10px`;
+  return `<div style="${grid};padding-bottom:8px;border-bottom:1px solid var(--border)"><div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Metric</div>${cols.map(c => `<div style="font-size:10px;font-weight:600;color:${c.col};text-align:right">${c.label}</div>`).join('')}</div>
+  ${ROWS.map(row => `<div style="${grid};padding:${row.gap ? '13px' : '7px'} 0 7px;border-bottom:1px solid var(--border)${row.gap ? ';border-top:1px solid var(--border);margin-top:4px' : ''}"><div style="font-size:11px;color:var(--text2)">${row.k}</div>${cols.map(c => `<div style="text-align:right;font-size:${row.strong ? 13 : 12}px;${row.strong ? 'font-weight:600;font-family:var(--serif);' : ''}color:var(--text)">${row.f(buckets[c.id])}</div>`).join('')}</div>`).join('')}`;
 }
 
-/* Request-type mix per channel — does chat skew to dining? */
 function chTypeMix(buckets) {
   const cols = CH_DEFS.filter(c => buckets[c.id].orders > 0);
-  const types = {};
-  cols.forEach(c => Object.entries(buckets[c.id].byType).forEach(([t, n]) => { types[t] = (types[t] || 0) + n; }));
-  const top = Object.entries(types).sort((a, b) => b[1] - a[1]).slice(0, 8).map(e => e[0]);
+  const types = {}; cols.forEach(c => Object.entries(buckets[c.id].byType).forEach(([t, n]) => types[t] = (types[t] || 0) + n));
+  const top = Object.entries(types).sort((a, b) => b[1] - a[1]).slice(0, 9).map(e => e[0]);
   if (!top.length) return '';
-
-  const grid = `display:grid;grid-template-columns:1.5fr ${cols.map(() => '1fr').join(' ')};gap:10px`;
-  return `
-  <div style="${grid};padding-bottom:8px;border-bottom:1px solid var(--border)">
-    <div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Request type</div>
-    ${cols.map(c => `<div style="font-size:10px;font-weight:600;color:${c.col};text-align:right">${c.label}</div>`).join('')}
-  </div>
-  ${top.map(t => `
-    <div style="${grid};padding:7px 0;border-bottom:1px solid var(--border);align-items:center">
-      <div style="font-size:11px;color:var(--text2)">${t}</div>
-      ${cols.map(c => {
-        const b = buckets[c.id];
-        const n = b.byType[t] || 0;
-        const pct = b.orders > 0 ? n / b.orders * 100 : 0;
-        return `<div style="text-align:right">
-          <span style="font-size:12px;color:var(--text)">${chPct(pct, 0)}</span>
-          <span style="font-size:9px;color:var(--text3);margin-left:4px">${n.toLocaleString()}</span>
-        </div>`;
-      }).join('')}
-    </div>`).join('')}
-  <div style="margin-top:9px;font-size:10px;color:var(--text3);line-height:1.5">Share of each channel's own orders, so columns read down to 100%. A type that dominates one channel and not another is a routing signal, not a demand signal.</div>`;
+  const grid = `display:grid;grid-template-columns:1.6fr ${cols.map(() => '1fr').join(' ')};gap:10px`;
+  return `<div style="${grid};padding-bottom:8px;border-bottom:1px solid var(--border)"><div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Request type</div>${cols.map(c => `<div style="font-size:10px;font-weight:600;color:${c.col};text-align:right">${c.label}</div>`).join('')}</div>
+  ${top.map(t => `<div style="${grid};padding:7px 0;border-bottom:1px solid var(--border);align-items:center"><div style="font-size:11px;color:var(--text2)">${t}</div>${cols.map(c => { const b = buckets[c.id]; const n = b.byType[t] || 0; const pct = b.orders ? n / b.orders * 100 : 0; return `<div style="text-align:right"><span style="font-size:12px;color:var(--text)">${chPct(pct, 0)}</span> <span style="font-size:9px;color:var(--text3)">${n}</span></div>`; }).join('')}</div>`).join('')}
+  <div style="margin-top:9px;font-size:10px;color:var(--text3);line-height:1.5">Share of each channel's own orders. A type that dominates one channel and not another is a routing signal — e.g. staff (Luna) handles housekeeping and valet, guests use chat and app for dining.</div>`;
 }
 
-/* Hourly demand shape — the late-night chat hypothesis, testable. */
+function chItems(buckets) {
+  // items are dominated by housekeeping amenities; show per guest channel, top 8
+  const guest = CH_DEFS.filter(c => c.guest && buckets[c.id].orders > 0);
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px">
+    ${guest.map(c => { const items = Object.entries(buckets[c.id].items).sort((a, b) => b[1] - a[1]).slice(0, 8);
+      if (!items.length) return `<div><div style="font-size:11px;font-weight:600;color:${c.col};margin-bottom:6px">${c.label}</div><div style="font-size:10px;color:var(--text3)">No itemised orders</div></div>`;
+      const max = items[0][1];
+      return `<div><div style="font-size:11px;font-weight:600;color:${c.col};margin-bottom:8px">${c.label}</div>${items.map(([name, n]) => `<div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text2);margin-bottom:2px"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:6px">${name}</span><span style="font-family:var(--serif);color:var(--text)">${n}</span></div><div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden"><div style="height:100%;width:${n / max * 100}%;background:${c.col}"></div></div></div>`).join('')}</div>`; }).join('')}
+  </div><div style="margin-top:10px;font-size:10px;color:var(--text3)">Top items by quantity, completed orders. Generic "Other" line items are the app's catch-all and are expected to lead.</div>`;
+}
+
 function chHourly(buckets) {
   const cols = CH_DEFS.filter(c => buckets[c.id].orders > 0 && c.guest);
   const max = Math.max(1, ...cols.map(c => Math.max(...buckets[c.id].byHour)));
-  return `
-  <div style="display:flex;gap:2px;align-items:flex-end;height:90px;margin-bottom:6px">
-    ${new Array(24).fill(0).map((_, h) => `
-      <div style="flex:1;display:flex;flex-direction:column-reverse;gap:1px;height:100%;justify-content:flex-start" title="${String(h).padStart(2,'0')}:00">
-        ${cols.map(c => {
-          const v = buckets[c.id].byHour[h];
-          return v > 0 ? `<div style="height:${(v / max * 100).toFixed(1)}%;background:${c.col};border-radius:1px" title="${c.label} ${String(h).padStart(2,'0')}:00 — ${v}"></div>` : '';
-        }).join('')}
-      </div>`).join('')}
-  </div>
-  <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text3)">
-    <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span>
-  </div>
-  <div style="margin-top:8px;font-size:10px;color:var(--text3);line-height:1.5">Bars stack per hour, scaled to the busiest hour across channels. Local server time.</div>`;
+  return `<div style="display:flex;gap:2px;align-items:flex-end;height:90px;margin-bottom:6px">
+    ${new Array(24).fill(0).map((_, h) => `<div style="flex:1;display:flex;flex-direction:column-reverse;gap:1px;height:100%" title="${String(h).padStart(2, '0')}:00">${cols.map(c => { const v = buckets[c.id].byHour[h]; return v > 0 ? `<div style="height:${(v / max * 100).toFixed(1)}%;background:${c.col};border-radius:1px" title="${c.label} ${h}:00 — ${v}"></div>` : ''; }).join('')}</div>`).join('')}
+  </div><div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text3)"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span></div>
+  <div style="margin-top:8px;font-size:10px;color:var(--text3)">Guest channels only, stacked per hour, scaled to the busiest hour. Server time. Tests the late-night chat hypothesis directly.</div>`;
 }
 
-/* Per-hotel channel share — the strongest test of the chat hypothesis. */
 function chByHotel(buckets) {
   const cols = CH_DEFS.filter(c => buckets[c.id].orders > 0);
-  const rows = H.filter(h => selH.has(h.n)).map(h => {
-    const per = {};
-    let total = 0;
-    cols.forEach(c => {
-      const v = buckets[c.id].byHotel[h.id] || { orders: 0, revenue: 0, completed: 0 };
-      per[c.id] = v; total += v.orders;
-    });
-    return { hotel: h, per, total };
-  }).filter(r => r.total > 0).sort((a, b) => b.total - a.total);
-
-  if (!rows.length) return `<div style="font-size:11px;color:var(--text3)">No orders for the selected hotels and months.</div>`;
-
-  const chatId = 'chat', waId = 'whatsapp';
+  const rows = H.filter(h => selH.has(h.n)).map(h => { const per = {}; let total = 0;
+    cols.forEach(c => { const v = buckets[c.id].byHotel[h.id] || { orders: 0, revenue: 0, completed: 0 }; per[c.id] = v; total += v.orders; });
+    return { hotel: h, per, total }; }).filter(r => r.total > 0).sort((a, b) => b.total - a.total);
+  if (!rows.length) return `<div style="font-size:11px;color:var(--text3)">No orders for the selected hotels.</div>`;
   const grid = 'display:grid;grid-template-columns:1.6fr 0.7fr 1.5fr 0.8fr 0.8fr;gap:10px';
-
-  return `
-  <div style="${grid};padding-bottom:8px;border-bottom:1px solid var(--border)">
-    ${['Hotel', 'Orders', 'Channel mix', 'Chat share', 'Chat AOV'].map((h, i) =>
-      `<div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)${i > 1 ? ';text-align:right' : ''}${i === 2 ? ';text-align:left' : ''}">${h}</div>`).join('')}
-  </div>
-  ${rows.map(r => {
-    const chat = r.per[chatId] || { orders: 0, revenue: 0, completed: 0 };
-    const chatShare = r.total > 0 ? chat.orders / r.total * 100 : 0;
-    const chatAov = chat.completed > 0 && chat.revenue > 0 ? chat.revenue / chat.completed : null;
-    return `
-    <div style="${grid};padding:9px 0;border-bottom:1px solid var(--border);align-items:center">
-      <div style="font-size:11px;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.hotel.n}</div>
-      <div style="text-align:right;font-size:12px;font-family:var(--serif);color:var(--text2)">${r.total.toLocaleString()}</div>
-      <div style="display:flex;height:16px;border-radius:3px;overflow:hidden">
-        ${cols.map(c => {
-          const pct = r.total > 0 ? r.per[c.id].orders / r.total * 100 : 0;
-          return pct > 0 ? `<div style="width:${pct}%;background:${c.col}" title="${c.label} ${pct.toFixed(0)}%"></div>` : '';
-        }).join('')}
-      </div>
-      <div style="text-align:right;font-size:12px;font-family:var(--serif);color:var(--text)">${chPct(chatShare, 0)}</div>
-      <div style="text-align:right;font-size:12px;font-family:var(--serif);color:var(--text)">${chatAov == null ? '—' : chEur(chatAov)}</div>
-    </div>`;
-  }).join('')}
-  <div style="margin-top:9px;font-size:10px;color:var(--text3);line-height:1.5">If chat share tracked hotel performance, the channel would be the lever. If it doesn't, the difference is content or operations.</div>`;
+  return `<div style="${grid};padding-bottom:8px;border-bottom:1px solid var(--border)">${['Hotel', 'Orders', 'Channel mix', 'Chat %', 'Chat AOV'].map((h, i) => `<div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)${i === 1 || i > 2 ? ';text-align:right' : ''}">${h}</div>`).join('')}</div>
+  ${rows.map(r => { const chat = r.per.chat || { orders: 0, revenue: 0, completed: 0 }; const cs = r.total ? chat.orders / r.total * 100 : 0; const ca = chat.completed && chat.revenue ? chat.revenue / chat.completed : null;
+    return `<div style="${grid};padding:9px 0;border-bottom:1px solid var(--border);align-items:center"><div style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.hotel.n}</div><div style="text-align:right;font-size:12px;font-family:var(--serif);color:var(--text2)">${r.total.toLocaleString()}</div><div style="display:flex;height:16px;border-radius:3px;overflow:hidden">${cols.map(c => { const pct = r.total ? r.per[c.id].orders / r.total * 100 : 0; return pct > 0 ? `<div style="width:${pct}%;background:${c.col}" title="${c.label} ${pct.toFixed(0)}%"></div>` : ''; }).join('')}</div><div style="text-align:right;font-size:12px;font-family:var(--serif)">${chPct(cs, 0)}</div><div style="text-align:right;font-size:12px;font-family:var(--serif)">${ca == null ? '—' : chEur(ca)}</div></div>`; }).join('')}
+  <div style="margin-top:9px;font-size:10px;color:var(--text3);line-height:1.5">If chat share tracks hotel performance the channel is the lever; if not, the difference is content or operations.</div>`;
 }
 
-/* Guests who used more than one channel. */
-function chOverlap(overlap, buckets) {
-  const multi = Object.entries(overlap).filter(([k]) => k.includes('+')).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  const single = Object.entries(overlap).filter(([k]) => !k.includes('+')).sort((a, b) => b[1] - a[1]);
-  const totalGuests = Object.values(overlap).reduce((a, n) => a + n, 0);
-  if (!totalGuests) return '';
+function chOverlap(overlap) {
+  const total = Object.values(overlap).reduce((a, n) => a + n, 0); if (!total) return '';
   const nameOf = k => k.split('+').map(id => (CH_DEFS.find(c => c.id === id) || {}).label || id).join(' + ');
-  const multiTotal = multi.reduce((a, [, n]) => a + n, 0);
-
-  return `
-  <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:12px">
-    <div><div style="font-family:var(--serif);font-size:18px;font-weight:600">${chPct(multiTotal / totalGuests * 100)}</div>
-    <div style="font-size:10px;color:var(--text3)">of guests used more than one channel</div></div>
-    <div><div style="font-family:var(--serif);font-size:18px;font-weight:600">${totalGuests.toLocaleString()}</div>
-    <div style="font-size:10px;color:var(--text3)">guests placed at least one order</div></div>
-  </div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:6px 20px">
-    ${single.concat(multi).map(([k, n]) => `
-      <div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--border)">
-        <span style="font-size:11px;color:var(--text2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nameOf(k)}${k.includes('+') ? '' : ' only'}</span>
-        <span style="font-size:11px;font-family:var(--serif);color:var(--text)">${n.toLocaleString()} <span style="font-size:9px;color:var(--text3)">${chPct(n / totalGuests * 100, 0)}</span></span>
-      </div>`).join('')}
-  </div>`;
+  const multi = Object.entries(overlap).filter(([k]) => k.includes('+')).sort((a, b) => b[1] - a[1]);
+  const single = Object.entries(overlap).filter(([k]) => !k.includes('+')).sort((a, b) => b[1] - a[1]);
+  const mt = multi.reduce((a, [, n]) => a + n, 0);
+  return `<div style="display:flex;gap:22px;flex-wrap:wrap;margin-bottom:12px"><div><div style="font-family:var(--serif);font-size:18px;font-weight:600">${chPct(mt / total * 100)}</div><div style="font-size:10px;color:var(--text3)">used more than one channel</div></div><div><div style="font-family:var(--serif);font-size:18px;font-weight:600">${total.toLocaleString()}</div><div style="font-size:10px;color:var(--text3)">guests placed an order</div></div></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:5px 20px">${single.concat(multi).slice(0, 12).map(([k, n]) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--border)"><span style="font-size:11px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nameOf(k)}${k.includes('+') ? '' : ' only'}</span><span style="font-size:11px;font-family:var(--serif)">${n} <span style="font-size:9px;color:var(--text3)">${chPct(n / total * 100, 0)}</span></span></div>`).join('')}</div>`;
 }
 
-/* Month-over-month channel trend. */
 function chTrend(monthly, months) {
   const keys = [...months].sort((a, b) => monthToDate(a) - monthToDate(b));
-  if (keys.length < 2) return `<div style="font-size:11px;color:var(--text3)">Select two or more months to see how the channel mix is shifting.</div>`;
+  if (keys.length < 2) return `<div style="font-size:11px;color:var(--text3)">Select two or more months to see the mix shift.</div>`;
   const cols = CH_DEFS.filter(c => keys.some(k => (monthly[k] || {})[c.id] > 0));
   const grid = `display:grid;grid-template-columns:1fr ${cols.map(() => '1fr').join(' ')};gap:10px`;
-  return `
-  <div style="${grid};padding-bottom:8px;border-bottom:1px solid var(--border)">
-    <div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Month</div>
-    ${cols.map(c => `<div style="font-size:10px;font-weight:600;color:${c.col};text-align:right">${c.label}</div>`).join('')}
-  </div>
-  ${keys.map(k => {
-    const tot = cols.reduce((a, c) => a + ((monthly[k] || {})[c.id] || 0), 0);
-    return `<div style="${grid};padding:8px 0;border-bottom:1px solid var(--border)">
-      <div style="font-size:11px;color:var(--text2)">${fmtMonth(k)}</div>
-      ${cols.map(c => {
-        const n = (monthly[k] || {})[c.id] || 0;
-        return `<div style="text-align:right"><span style="font-size:12px;font-family:var(--serif);color:var(--text)">${chPct(tot > 0 ? n / tot * 100 : 0, 0)}</span><span style="font-size:9px;color:var(--text3);margin-left:5px">${n.toLocaleString()}</span></div>`;
-      }).join('')}
-    </div>`;
-  }).join('')}`;
+  return `<div style="${grid};padding-bottom:8px;border-bottom:1px solid var(--border)"><div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">Month</div>${cols.map(c => `<div style="font-size:10px;font-weight:600;color:${c.col};text-align:right">${c.label}</div>`).join('')}</div>
+  ${keys.map(k => { const tot = cols.reduce((a, c) => a + ((monthly[k] || {})[c.id] || 0), 0); return `<div style="${grid};padding:8px 0;border-bottom:1px solid var(--border)"><div style="font-size:11px;color:var(--text2)">${fmtMonth(k)}</div>${cols.map(c => { const n = (monthly[k] || {})[c.id] || 0; return `<div style="text-align:right"><span style="font-size:12px;font-family:var(--serif)">${chPct(tot ? n / tot * 100 : 0, 0)}</span> <span style="font-size:9px;color:var(--text3)">${n}</span></div>`; }).join('')}</div>`; }).join('')}`;
 }
 
 /* ── Page renderer ─────────────────────────────────────────────────── */
 async function rChannels() {
-  const sub = document.getElementById('ch-sub');
-  const body = document.getElementById('ch-body');
+  const sub = document.getElementById('ch-sub'), body = document.getElementById('ch-body');
   if (!body) return;
-
-  if (!selM.size) {
-    if (sub) sub.textContent = 'Upload tasks XLS to load';
-    body.innerHTML = emptyState('Upload monthly task reports to see the channel split');
-    return;
-  }
-
+  if (!selM.size) { if (sub) sub.textContent = 'Upload tasks XLS to load'; body.innerHTML = emptyState('Upload monthly task reports to see the channel split'); return; }
   body.innerHTML = `<div class="fu-loading"><div class="fu-spinner"></div>Reading order sources...</div>`;
-
-  let agg;
-  try {
-    agg = await chAggregate();
-  } catch (e) {
-    body.innerHTML = `<div style="font-size:11px;color:var(--red);padding:10px">Channel analysis failed: ${e.message}</div>`;
-    return;
-  }
-
-  const { buckets, monthly, overlap, unknownSource, totalRows, months } = agg;
+  let agg; try { agg = await chAggregate(); } catch (e) { body.innerHTML = `<div style="font-size:11px;color:var(--red);padding:10px">Channel analysis failed: ${e.message}</div>`; return; }
+  const { buckets, monthly, overlap, unknownSource, totalRows, droppedHotel, months } = agg;
   const period = selM.size === 1 ? fmtMonth([...selM][0]) : `${selM.size} months`;
   if (sub) sub.textContent = `${period} · ${totalRows.toLocaleString()} valid orders · split by createdBy.source`;
+  if (!totalRows) { body.innerHTML = emptyState('No valid orders for the selected months and hotels'); return; }
 
-  if (!totalRows) {
-    body.innerHTML = emptyState('No valid orders for the selected months and hotels');
-    return;
-  }
+  const guestTot = CH_DEFS.filter(c => c.guest).reduce((a, c) => a + buckets[c.id].orders, 0);
+  const convTot = buckets.chat.orders + buckets.whatsapp.orders;
+  const totalRev = CH_DEFS.reduce((a, c) => a + buckets[c.id].revenue, 0);
+  const aovDelta = (buckets.chat.aov != null && buckets.app.aov != null) ? buckets.chat.aov - buckets.app.aov : null;
 
-  const guestTotal = CH_DEFS.filter(c => c.guest).reduce((a, c) => a + buckets[c.id].orders, 0);
-  const convTotal = buckets.chat.orders + buckets.whatsapp.orders;
+  const headline = `<div style="display:flex;gap:26px;flex-wrap:wrap;align-items:baseline;padding:12px 14px;background:var(--bg2);border-radius:6px;margin-bottom:16px">
+    <div><div style="font-family:var(--serif);font-size:20px;font-weight:600">${chPct(guestTot ? convTot / guestTot * 100 : 0)}</div><div style="font-size:10px;color:var(--text3)">of guest orders are conversational</div></div>
+    <div><div style="font-family:var(--serif);font-size:20px;font-weight:600">${chEur(totalRev)}</div><div style="font-size:10px;color:var(--text3)">total order revenue</div></div>
+    <div><div style="font-family:var(--serif);font-size:20px;font-weight:600">${aovDelta == null ? '—' : (aovDelta >= 0 ? '+' : '') + chEur(aovDelta)}</div><div style="font-size:10px;color:var(--text3)">chat AOV vs app AOV</div></div>
+    <div style="margin-left:auto;max-width:320px;font-size:10px;color:var(--text3);line-height:1.5;text-align:right">From uploaded task reports. Every order carries its source, so this covers the chat and WhatsApp orders GA4 cannot see.</div>
+  </div>`;
 
-  const headline = `
-    <div style="display:flex;gap:26px;flex-wrap:wrap;align-items:baseline;padding:12px 14px;background:var(--bg2);border-radius:6px;margin-bottom:16px">
-      <div>
-        <div style="font-family:var(--serif);font-size:20px;font-weight:600">${chPct(guestTotal > 0 ? convTotal / guestTotal * 100 : 0)}</div>
-        <div style="font-size:10px;color:var(--text3)">of guest orders are conversational</div>
-      </div>
-      <div>
-        <div style="font-family:var(--serif);font-size:20px;font-weight:600">${chEur(buckets.chat.revenue + buckets.whatsapp.revenue)}</div>
-        <div style="font-size:10px;color:var(--text3)">revenue via chat + WhatsApp</div>
-      </div>
-      <div>
-        <div style="font-family:var(--serif);font-size:20px;font-weight:600">${buckets.chat.aov == null || buckets.app.aov == null ? '—' : (buckets.chat.aov >= buckets.app.aov ? '+' : '') + chEur(buckets.chat.aov - buckets.app.aov)}</div>
-        <div style="font-size:10px;color:var(--text3)">chat AOV vs app AOV</div>
-      </div>
-      <div style="margin-left:auto;max-width:330px;font-size:10px;color:var(--text3);line-height:1.5;text-align:right">
-        Backend order records. Every order carries its source, so nothing here depends on GA4 — including the chat orders GA4 cannot see.
-      </div>
-    </div>`;
+  const caveat = `<div style="padding:9px 12px;background:var(--bg2);border-left:2px solid var(--amber);border-radius:0 5px 5px 0;font-size:10px;color:var(--text2);line-height:1.55;margin-bottom:16px">
+    <strong>No conversion rate here, by design.</strong> The backend records orders <em>placed</em>, not attempted — there is no chat equivalent of a start event, so a chat "conversion rate" would have no valid denominator. Volume, revenue, AOV, fulfilment, cancellation and satisfaction are all sound.
+    ${unknownSource ? `<br><br>${unknownSource.toLocaleString()} order(s) had an unrecognised source and are grouped under Staff.` : ''}
+    ${droppedHotel ? `<br>${droppedHotel.toLocaleString()} order(s) were on hotels not in the mapped list of ${H.length} and were excluded.` : ''}
+  </div>`;
 
-  const caveat = `
-    <div style="padding:9px 12px;background:var(--bg2);border-left:2px solid var(--amber);border-radius:0 5px 5px 0;font-size:10px;color:var(--text2);line-height:1.55;margin-bottom:16px">
-      <strong>No conversion rate on this page, by design.</strong> The backend records orders <em>placed</em>, not orders attempted — there is no chat equivalent of <code>booking_start</code>. Comparing a chat "conversion rate" against the app's would put a missing denominator next to one inflated by screen loads. Volume, revenue, AOV, fulfilment and cancellation are all sound.
-      ${unknownSource ? `<br><br>${unknownSource.toLocaleString()} order${unknownSource === 1 ? '' : 's'} carried no source value and ${unknownSource === 1 ? 'is' : 'are'} counted under Staff-raised.` : ''}
-    </div>`;
+  const sec = (t, s, c) => `<div style="margin-top:24px"><div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text2);font-weight:500">${t}</div>${s ? `<div style="font-size:10px;color:var(--text3);margin-top:2px;margin-bottom:10px">${s}</div>` : '<div style="height:10px"></div>'}${c}</div>`;
 
-  const sec = (title, subtitle, content) => `
-    <div style="margin-top:24px">
-      <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text2);font-weight:500">${title}</div>
-      ${subtitle ? `<div style="font-size:10px;color:var(--text3);margin-top:2px;margin-bottom:10px">${subtitle}</div>` : '<div style="height:10px"></div>'}
-      ${content}
-    </div>`;
-
-  body.innerHTML =
-    headline + caveat +
-    chShareBar(buckets) +
-    sec('Channel comparison', 'Volume, money, fulfilment and guest behaviour side by side', chComparisonTable(buckets)) +
-    sec('What each channel is used for', 'Request type mix within each channel', chTypeMix(buckets)) +
-    sec('When guests order', 'Hourly distribution, guest channels only', chHourly(buckets)) +
-    sec('Channel mix by hotel', 'Does chat adoption track hotel performance?', chByHotel(buckets)) +
-    sec('Guests using more than one channel', 'Overlap between channels across the selected period', chOverlap(overlap, buckets)) +
-    sec('How the mix is shifting', 'Share of orders by month', chTrend(monthly, months));
+  body.innerHTML = headline + caveat + chShareBar(buckets, 'orders')
+    + sec('Channel comparison', 'Volume, money, fulfilment, guest behaviour and satisfaction side by side', chComparison(buckets))
+    + sec('What each channel is used for', 'Request-type mix within each channel', chTypeMix(buckets))
+    + sec('Top items by channel', 'What guests actually order through each guest channel', chItems(buckets))
+    + sec('When guests order', 'Hourly distribution, guest channels', chHourly(buckets))
+    + sec('Channel mix by hotel', 'Does chat adoption track hotel performance?', chByHotel(buckets))
+    + sec('Guests using more than one channel', 'Overlap across the selected period', chOverlap(overlap))
+    + sec('How the mix is shifting', 'Share of orders by month', chTrend(monthly, months));
 }
 
 
