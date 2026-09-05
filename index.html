@@ -447,7 +447,6 @@ body.show-engg .engg-note { display: block !important; }
 <!-- FILTER BAR -->
 <div class="fbar" id="fbar">
   <span class="fbar-label">Filter</span>
-  <button class="dd-btn" id="andermatt-toggle" onclick="toggleAndermatt()" title="The Chedi Andermatt is excluded by default to match the monthly Area GM deck">+ Andermatt <span id="andermatt-toggle-lbl" style="font-weight:600;margin-left:4px">Off</span></button>
   <div class="dd-wrap">
     <button class="dd-btn" id="dd-month-btn" onclick="toggleDD('month')">
       <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M5 1v3M11 1v3M2 6h12"/></svg>
@@ -1517,20 +1516,8 @@ const ANDERMATT_ID = '2bb8b4b5-e14d-496b-9f20-1891eb1bdf20';
 let includeAndermatt = false;
 const selH = new Set(H.filter(h=>h.id!==ANDERMATT_ID).map(h=>h.n)); // selected hotels
 
-function toggleAndermatt(){
-  includeAndermatt=!includeAndermatt;
-  const name=(H.find(h=>h.id===ANDERMATT_ID)||{}).n;
-  if(name){ if(includeAndermatt) selH.add(name); else selH.delete(name); }
-  const lbl=document.getElementById('andermatt-toggle-lbl');
-  if(lbl) lbl.textContent=includeAndermatt?'On':'Off';
-  const btn=document.getElementById('andermatt-toggle');
-  if(btn) btn.classList.toggle('af', includeAndermatt);
-  // clear caches and re-render current page
-  if(typeof summaryCache==='object') for(const k in summaryCache) delete summaryCache[k];
-  if(typeof rowCache==='object'){} // rows are raw, keep
-  const active=document.querySelector('.nav-item.on');
-  if(active) active.click();
-}
+// Andermatt is now a normal hotel in the dropdown (deselected by default to match the deck)
+
 let ddOpen = null;
 const charts = {};
 
@@ -5286,7 +5273,7 @@ const CH_ANDERMATT_ID = '2bb8b4b5-e14d-496b-9f20-1891eb1bdf20';
 function chMedian(a){ if(!a.length)return null; const s=[...a].sort((x,y)=>x-y),m=Math.floor(s.length/2); return s.length%2?s[m]:(s[m-1]+s[m])/2; }
 function chEmpty(){ return {orders:0,completed:0,cancelled:0,delayed:0,escalated:0,revenue:0,revenueCancelled:0,deliveryRev:0,values:[],
   fulfilMins:[],slaBreach:0,slaTotal:0,byType:{},byHour:new Array(24).fill(0),byHotel:{},items:{},
-  guests:new Set(),guestOrderCounts:{},fbCount:0,fbLikes:0,fbStars:[]}; }
+  guests:new Set(),guestOrderCounts:{},fbCount:0,fbLikes:0,fbDislikes:0,fbStars:[]}; }
 
 async function chAggregate(){
   const months=[...selM];
@@ -5297,14 +5284,21 @@ async function chAggregate(){
   const monthly={},guestChannels={},taskChannel={};
   // v57 additions:
   // hotelDeptCh[hotelId][dept][channel] = {orders, revenue}
-  // fbHotelDeptCh[hotelId][dept][channel] = {n, likes, stars[]}
   // journey[guestId] = [{t, ch, hotelId}]  — ordered later, across ALL months
-  const hotelDeptCh={}, fbHotelDeptCh={}, journey={}, taskMeta={};
+  const hotelDeptCh={}, journey={}, taskMeta={};
+  // v58: monthly revenue by channel, and monthly orders+revenue by dept×channel (for trend lines)
+  const monthlyRev={};      // monthlyRev[mk][ch] = revenue
+  const monthlyDept={};     // monthlyDept[mk][dept][ch] = {orders, revenue}
+  const deptTotals={};      // deptTotals[dept][ch] = {orders, revenue}  (reverse-of-typemix)
+  const chDeptFb={};        // chDeptFb[dept][ch] = {n, likes, dislikes, stars[]}  (portfolio feedback)
+  const itemIndex=[];       // flat list of {name,qty,hotelId,dept,ch,hr} for filtered Top Items
   let excludedDept=0,totalRows=0,droppedHotel=0,andermattHeld=0;
 
   for(const mk of months){
     const rows=await getRows('tasks',mk);
     monthly[mk]={}; CH_DEFS.forEach(c=>monthly[mk][c.id]=0);
+    monthlyRev[mk]={}; CH_DEFS.forEach(c=>monthlyRev[mk][c.id]=0);
+    monthlyDept[mk]=monthlyDept[mk]||{};
     rows.forEach(r=>{
       if(!validTask(r)||!createdAtMonth(r,mk))return;
       const rt=String(r.requestType||'').toUpperCase().replace(/ /g,'_');
@@ -5324,7 +5318,12 @@ async function chAggregate(){
         let oc=meta.otherCharges; if(!Array.isArray(oc))oc=oc?[oc]:[];
         oc.forEach(o=>{const p=parseFloat(o&&o.price);if(p>0)b.deliveryRev+=p;});
         let items=meta.items; if(!Array.isArray(items))items=items?[items]:[];
-        items.forEach(it=>{if(it&&it.name){const q=parseInt(it.quantity)||1;b.items[it.name]=(b.items[it.name]||0)+q;}});
+        items.forEach(it=>{if(it&&it.name){const q=parseInt(it.quantity)||1;b.items[it.name]=(b.items[it.name]||0)+q;
+          // v58: item index by hotel × dept × channel × hourBucket for filtered Top Items
+          const hrB=(new Date(r.createdAt).getHours());
+          const rec={name:it.name,qty:q,hotelId:r.hotelId,dept:rt,ch,hr:isNaN(hrB)?-1:hrB};
+          itemIndex.push(rec);
+        }});
         // completion time & SLA — EXCLUDE ENGINEERING (script policy)
         if(rt!=='ENGINEERING' && r.createdAt && r.lastStatusUpdatedAt){
           const mins=(new Date(r.lastStatusUpdatedAt)-new Date(r.createdAt))/60000;
@@ -5355,21 +5354,35 @@ async function chAggregate(){
       const hddc=(hdd[ch]=hdd[ch]||{orders:0,revenue:0});
       hddc.orders++; if(status==='COMPLETED')hddc.revenue+=val;
       taskMeta[String(r.id)]={hotelId:r.hotelId,dept:deptKey,ch};
+      // v58 trend + reverse-typemix accumulation
+      if(status==='COMPLETED') monthlyRev[mk][ch]+=val;
+      const md=(monthlyDept[mk][deptKey]=monthlyDept[mk][deptKey]||{});
+      const mdc=(md[ch]=md[ch]||{orders:0,revenue:0}); mdc.orders++; if(status==='COMPLETED')mdc.revenue+=val;
+      const dt=(deptTotals[deptKey]=deptTotals[deptKey]||{});
+      const dtc=(dt[ch]=dt[ch]||{orders:0,revenue:0}); dtc.orders++; if(status==='COMPLETED')dtc.revenue+=val;
     });
   }
   for(const mk of months){
     let fb=[]; try{fb=await getRows('feedback',mk);}catch(e){}
-    fb.forEach(f=>{const ch=taskChannel[String(f.taskId||'')];if(!ch)return;const b=buckets[ch];b.fbCount++;
-      const rn=String(f.reaction||'').toUpperCase(); if(rn==='LIKE'||rn==='POSITIVE')b.fbLikes++;
-      const st=parseFloat(f.star_rating); if(st>0)b.fbStars.push(st);
-      // feedback × hotel × dept × channel
+    fb.forEach(f=>{
       const tm=taskMeta[String(f.taskId||'')];
-      if(tm){
-        const h=(fbHotelDeptCh[tm.hotelId]=fbHotelDeptCh[tm.hotelId]||{});
-        const d=(h[tm.dept]=h[tm.dept]||{});
-        const c=(d[tm.ch]=d[tm.ch]||{n:0,likes:0,stars:[]});
-        c.n++; if(rn==='LIKE'||rn==='POSITIVE')c.likes++; if(st>0)c.stars.push(st);
-      }
+      if(!tm)return; // only feedback that joins to an in-scope order
+      const ch=tm.ch;
+      const rn=String(f.reaction||'').toUpperCase();
+      const st=parseFloat(f.star_rating);
+      const isLike = rn==='LIKE'||rn==='POSITIVE';
+      const isDislike = rn==='DISLIKE'||rn==='NEGATIVE';
+      const hasStar = st>0;
+      // A feedback row only counts if it carries an actual signal (reaction or star).
+      // ~97% of feedback rows are unanswered prompts — including them would drown the signal.
+      if(!isLike && !isDislike && !hasStar) return;
+      const b=buckets[ch]; b.fbCount++;
+      if(isLike)b.fbLikes++; if(isDislike)b.fbDislikes=(b.fbDislikes||0)+1;
+      if(hasStar)b.fbStars.push(st);
+      // channel × dept at PORTFOLIO level (this is where n is usable)
+      const cd=(chDeptFb[tm.dept]=chDeptFb[tm.dept]||{});
+      const cdc=(cd[ch]=cd[ch]||{n:0,likes:0,dislikes:0,stars:[]});
+      cdc.n++; if(isLike)cdc.likes++; if(isDislike)cdc.dislikes++; if(hasStar)cdc.stars.push(st);
     });
   }
   // ── guest journey: first-order channel + repeat same/different ──
@@ -5403,7 +5416,8 @@ async function chAggregate(){
   const overlap={};
   Object.values(guestChannels).forEach(set=>{const key=CH_DEFS.filter(c=>set.has(c.id)).map(c=>c.id).join('+'); if(key)overlap[key]=(overlap[key]||0)+1;});
   return {buckets,monthly,overlap,excludedDept,totalRows,droppedHotel,andermattHeld,months,
-          hotelDeptCh,fbHotelDeptCh,firstChannel,journeyGuests,journeyRepeat};
+          hotelDeptCh,firstChannel,journeyGuests,journeyRepeat,
+          monthlyRev,monthlyDept,deptTotals,chDeptFb,itemIndex};
 }
 /* ── formatting ─────────────────────────────────────────────────────── */
 const chEur = v => v == null ? '—' : '€' + Math.round(v).toLocaleString();
@@ -5463,17 +5477,6 @@ function chTypeMix(buckets) {
   <div style="margin-top:9px;font-size:10px;color:var(--text3);line-height:1.5">Share of each channel's own orders. A type that dominates one channel and not another is a routing signal — e.g. staff (Luna) handles housekeeping and valet, guests use chat and app for dining.</div>`;
 }
 
-function chItems(buckets) {
-  // items are dominated by housekeeping amenities; show per guest channel, top 8
-  const guest = CH_DEFS.filter(c => c.guest && buckets[c.id].orders > 0);
-  return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px">
-    ${guest.map(c => { const items = Object.entries(buckets[c.id].items).sort((a, b) => b[1] - a[1]).slice(0, 8);
-      if (!items.length) return `<div><div style="font-size:11px;font-weight:600;color:${c.col};margin-bottom:6px">${c.label}</div><div style="font-size:10px;color:var(--text3)">No itemised orders</div></div>`;
-      const max = items[0][1];
-      return `<div><div style="font-size:11px;font-weight:600;color:${c.col};margin-bottom:8px">${c.label}</div>${items.map(([name, n]) => `<div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text2);margin-bottom:2px"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:6px">${name}</span><span style="font-family:var(--serif);color:var(--text)">${n}</span></div><div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden"><div style="height:100%;width:${n / max * 100}%;background:${c.col}"></div></div></div>`).join('')}</div>`; }).join('')}
-  </div><div style="margin-top:10px;font-size:10px;color:var(--text3)">Top items by quantity, completed orders. Generic "Other" line items are the app's catch-all and are expected to lead.</div>`;
-}
-
 function chHourly(buckets) {
   const cols = CH_DEFS.filter(c => buckets[c.id].orders > 0 && c.guest);
   const max = Math.max(1, ...cols.map(c => Math.max(...buckets[c.id].byHour)));
@@ -5492,16 +5495,65 @@ function chByHotel(buckets) {
     cols.forEach(c => { const v = buckets[c.id].byHotel[h.id] || { orders: 0, revenue: 0, completed: 0 }; per[c.id] = v; total += v.orders; });
     return { hotel: h, per, total }; }).filter(r => r.total > 0).sort((a, b) => b.total - a.total);
   if (!rows.length) return `<div style="font-size:11px;color:var(--text3)">No orders for the selected hotels.</div>`;
-  const grid = 'display:grid;grid-template-columns:1.6fr 0.7fr 1.5fr 0.8fr 0.8fr;gap:10px';
-  return `<div style="${grid};padding-bottom:8px;border-bottom:1px solid var(--border)">${['Hotel', 'Orders', 'Channel mix', 'Chat %', 'Chat AOV'].map((h, i) => `<div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)${i === 1 || i > 2 ? ';text-align:right' : ''}">${h}</div>`).join('')}</div>
-  ${rows.map(r => { const chat = r.per.chat || { orders: 0, revenue: 0, completed: 0 }; const cs = r.total ? chat.orders / r.total * 100 : 0; const ca = chat.completed && chat.revenue ? chat.revenue / chat.completed : null;
-    return `<div style="${grid};padding:9px 0;border-bottom:1px solid var(--border);align-items:center"><div style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.hotel.n}</div><div style="text-align:right;font-size:12px;font-family:var(--serif);color:var(--text2)">${r.total.toLocaleString()}</div><div style="display:flex;height:16px;border-radius:3px;overflow:hidden">${cols.map(c => { const pct = r.total ? r.per[c.id].orders / r.total * 100 : 0; return pct > 0 ? `<div style="width:${pct}%;background:${c.col}" title="${c.label} ${pct.toFixed(0)}%"></div>` : ''; }).join('')}</div><div style="text-align:right;font-size:12px;font-family:var(--serif)">${chPct(cs, 0)}</div><div style="text-align:right;font-size:12px;font-family:var(--serif)">${ca == null ? '—' : chEur(ca)}</div></div>`; }).join('')}
-  <div style="margin-top:9px;font-size:10px;color:var(--text3);line-height:1.5">If chat share tracks hotel performance the channel is the lever; if not, the difference is content or operations.</div>`;
+  const grid = `display:grid;grid-template-columns:1.6fr 0.7fr 1.4fr ${cols.map(()=>'0.7fr').join(' ')};gap:10px`;
+  const head = ['Hotel','Requests','Channel mix'].concat(cols.map(c=>c.label));
+  return `<div style="${grid};padding-bottom:8px;border-bottom:1px solid var(--border)">${head.map((h,i)=>`<div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3)${i>=1?';text-align:right':''}${i===2?';text-align:left':''}">${h}</div>`).join('')}</div>
+  ${rows.map(r => `<div style="${grid};padding:9px 0;border-bottom:1px solid var(--border);align-items:center">
+    <div style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.hotel.n}</div>
+    <div style="text-align:right;font-size:13px;font-family:var(--serif);font-weight:600">${r.total.toLocaleString()}</div>
+    <div style="display:flex;height:16px;border-radius:3px;overflow:hidden">${cols.map(c => { const pct = r.total ? r.per[c.id].orders / r.total * 100 : 0; return pct > 0 ? `<div style="width:${pct}%;background:${c.col}" title="${c.label} ${pct.toFixed(0)}%"></div>` : ''; }).join('')}</div>
+    ${cols.map(c=>{const pct=r.total?r.per[c.id].orders/r.total*100:0;return `<div style="text-align:right;font-size:11px;color:${pct?'var(--text)':'var(--text3)'}">${pct?chPct(pct,0):'—'}</div>`;}).join('')}
+  </div>`).join('')}
+  <div style="margin-top:9px;font-size:10px;color:var(--text3);line-height:1.5">Total requests per hotel, then each channel's share. Sorted by volume. If chat share tracks hotel performance the channel is the lever; if not, the difference is content or operations.</div>`;
+}
+
+/* ── Top Items with hotel + department + time-of-day filters ─────────── */
+let chItemHotel='ALL', chItemDept='ALL', chItemTime='ALL', chItemIndexCache=[];
+const CH_TIME_BUCKETS={ALL:[0,24],morning:[5,11],midday:[11,15],evening:[15,22],late:[22,29]}; // late wraps midnight (22-23 + 0-4 handled below)
+function chSetItemHotel(v){chItemHotel=v;chRenderItems();}
+function chSetItemDept(v){chItemDept=v;chRenderItems();}
+function chSetItemTime(v){chItemTime=v;chRenderItems();}
+function chInTime(hr){
+  if(chItemTime==='ALL')return true;
+  if(hr<0)return false;
+  if(chItemTime==='late')return hr>=22||hr<5;
+  const[a,b]=CH_TIME_BUCKETS[chItemTime];return hr>=a&&hr<b;
+}
+function chRenderItems(){
+  const el=document.getElementById('ch-items-body'); if(!el)return;
+  const cols=CH_DEFS.slice();
+  const filt=chItemIndexCache.filter(r=>
+    (chItemHotel==='ALL'||r.hotelId===chItemHotel)&&
+    (chItemDept==='ALL'||r.dept===chItemDept)&&
+    chInTime(r.hr));
+  // aggregate name -> per-channel qty
+  const agg={};
+  filt.forEach(r=>{const a=(agg[r.name]=agg[r.name]||{total:0});a.total+=r.qty;a[r.ch]=(a[r.ch]||0)+r.qty;});
+  const rows=Object.entries(agg).map(([name,v])=>({name,...v})).sort((a,b)=>b.total-a.total).slice(0,15);
+  if(!rows.length){el.innerHTML=`<div style="font-size:11px;color:var(--text3)">No items match this filter.</div>`;return;}
+  const grid=`display:grid;grid-template-columns:1.8fr 0.6fr ${cols.map(()=>'0.7fr').join(' ')};gap:10px`;
+  el.innerHTML=`<div style="${grid};padding-bottom:7px;border-bottom:1px solid var(--border)"><div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Item</div><div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);text-align:right">Qty</div>${cols.map(c=>`<div style="font-size:10px;font-weight:600;color:${c.col};text-align:right">${c.label}</div>`).join('')}</div>
+    ${rows.map(r=>`<div style="${grid};padding:7px 0;border-bottom:1px solid var(--border);align-items:center"><div style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.name}</div><div style="text-align:right;font-size:12px;font-family:var(--serif);font-weight:600">${r.total}</div>${cols.map(c=>`<div style="text-align:right;font-size:11px;color:${r[c.id]?'var(--text)':'var(--text3)'}">${r[c.id]||'—'}</div>`).join('')}</div>`).join('')}
+    <div style="margin-top:9px;font-size:10px;color:var(--text3)">Top items by quantity for the selected hotel, department and time, split by channel. "Other" is the app's catch-all line item.</div>`;
+}
+function chItemsFiltered(hotelDeptCh){
+  // populate filter option lists from the index
+  const hotels=H.filter(h=>selH.has(h.n));
+  const depts=[...new Set(chItemIndexCache.map(r=>r.dept))].sort();
+  const timeOpts=[['ALL','All day'],['morning','Morning 5–11'],['midday','Midday 11–15'],['evening','Evening 15–22'],['late','Late 22–5']];
+  const sel=(id,cur,opts,fn)=>`<select onchange="${fn}(this.value)" style="font-size:10px;padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text2)">${opts.map(o=>`<option value="${o[0]}"${cur===o[0]?' selected':''}>${o[1]}</option>`).join('')}</select>`;
+  const controls=`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+    ${sel('h',chItemHotel,[['ALL','All hotels']].concat(hotels.map(h=>[h.id,h.n])),'chSetItemHotel')}
+    ${sel('d',chItemDept,[['ALL','All departments']].concat(depts.map(d=>[d,chDeptLabel(d)])),'chSetItemDept')}
+    ${sel('t',chItemTime,timeOpts,'chSetItemTime')}
+  </div>`;
+  // render initial into a body div (deferred so cache is set)
+  setTimeout(chRenderItems,0);
+  return controls+`<div id="ch-items-body"></div>`;
 }
 
 /* Pretty dept label from an uppercase requestType key. */
-function chDeptLabel(rt){
-  const map={IN_ROOM_DINING:'In-Room Dining',HOUSEKEEPING:'Housekeeping',SPA:'SPA',RESTAURANT:'Restaurant',
+function chDeptLabel(rt){  const map={IN_ROOM_DINING:'In-Room Dining',HOUSEKEEPING:'Housekeeping',SPA:'SPA',RESTAURANT:'Restaurant',
     ACTIVITY:'Activity',TAXI:'Taxi',STORE:'Store',ENGINEERING:'Engineering',FRONTDESK:'Front Desk',
     VALET:'Valet',CONCIERGE:'Concierge',GUEST_EXPERIENCE:'Guest Experience',AMENITIES:'Amenities',LAUNDRY:'Laundry'};
   return map[rt]||rt.split('_').map(w=>w.charAt(0)+w.slice(1).toLowerCase()).join(' ');
@@ -5555,31 +5607,98 @@ function chHotelDrill(hotelDeptCh){
 }
 
 /* ── Feedback drill-down: pick a hotel → dept × channel satisfaction ── */
-let chFbHotel = null;
-function chSetFbHotel(id){ chFbHotel=(chFbHotel===id?null:id); rChannels(); }
-function chFeedbackDrill(fbHotelDeptCh){
-  const hotels=H.filter(h=>selH.has(h.n)).map(h=>{
-    const d=fbHotelDeptCh[h.id]||{}; let n=0; Object.values(d).forEach(dd=>Object.values(dd).forEach(c=>n+=c.n));
-    return {h,n};
-  }).filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
-  if(!hotels.length) return `<div style="font-size:11px;color:var(--text3)">No feedback could be joined to orders in range. Feedback carries a taskId but coverage is thin, so this needs more rated responses to be meaningful.</div>`;
-  const chips=hotels.map(({h,n})=>`<button onclick="chSetFbHotel('${h.id}')" style="cursor:pointer;border:1px solid ${chFbHotel===h.id?'var(--text)':'var(--border)'};background:${chFbHotel===h.id?'var(--text)':'transparent'};color:${chFbHotel===h.id?'var(--bg)':'var(--text2)'};border-radius:14px;padding:4px 11px;font-size:10px;white-space:nowrap">${h.n} <span style="opacity:.6">${n}</span></button>`).join('');
-  const sel=chFbHotel||hotels[0].h.id;
-  const selName=(H.find(h=>h.id===sel)||{}).n||'';
-  const depts=fbHotelDeptCh[sel]||{};
-  const cols=CH_DEFS.slice();
-  const rows=Object.entries(depts).map(([dept,chs])=>({dept,chs,n:Object.values(chs).reduce((a,c)=>a+c.n,0)})).filter(r=>r.n>0).sort((a,b)=>b.n-a.n);
+/* ── Feedback by channel + channel×dept (portfolio level) ────────────
+   Per-hotel feedback is too sparse to be honest (~278 rated rows across
+   11 hotels). Portfolio channel level has usable n (app ~149, chat ~128),
+   and channel×dept has several cells with n>=10. So we aggregate there.
+   Signal = like-rate primarily (likes are ~10x more common than stars);
+   avg star shown where enough ratings exist. */
+function chFeedback(buckets, chDeptFb){
+  const cols=CH_DEFS.filter(c=>buckets[c.id].fbCount>0);
+  if(!cols.length) return `<div style="font-size:11px;color:var(--text3)">No feedback with a rating or reaction could be joined to orders in range.</div>`;
+  // top strip: per-channel like-rate + avg star
+  const strip=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px">
+    ${cols.map(c=>{const b=buckets[c.id];const likePct=b.fbCount?b.fbLikes/b.fbCount*100:null;
+      const star=b.fbStars.length?(b.fbStars.reduce((a,s)=>a+s,0)/b.fbStars.length):null;
+      return `<div style="padding:10px 12px;background:var(--bg2);border-radius:6px;border-top:2px solid ${c.col}">
+        <div style="font-size:10px;color:var(--text2);margin-bottom:4px">${c.label}</div>
+        <div style="font-family:var(--serif);font-size:18px;font-weight:600">${likePct==null?'—':chPct(likePct,0)}</div>
+        <div style="font-size:9px;color:var(--text3);margin-top:1px">liked · n=${b.fbCount}${star?` · ${star.toFixed(1)}★ (${b.fbStars.length})`:''}${b.fbDislikes?` · ${b.fbDislikes} disliked`:''}</div>
+      </div>`;}).join('')}
+  </div>`;
+  // channel × dept table (portfolio), rows sorted by total feedback n
+  const rows=Object.entries(chDeptFb).map(([dept,chs])=>({dept,chs,n:Object.values(chs).reduce((a,c)=>a+c.n,0)}))
+    .filter(r=>r.n>0).sort((a,b)=>b.n-a.n);
   const grid=`display:grid;grid-template-columns:1.4fr ${cols.map(()=>'1fr').join(' ')};gap:10px`;
   const cell=c=>{ if(!c||!c.n) return `<span style="color:var(--text3)">—</span>`;
-    const star=c.stars.length?(c.stars.reduce((a,s)=>a+s,0)/c.stars.length).toFixed(1)+'★':'';
     const like=chPct(c.likes/c.n*100,0);
-    return `<span style="font-size:11px;color:var(--text)">${star||like}</span> <span style="font-size:9px;color:var(--text3)">n=${c.n}</span>`;
+    const low=c.n<10?` style="opacity:.5"`:'';
+    return `<span${low}><span style="font-size:11px;color:var(--text)">${like}</span> <span style="font-size:9px;color:var(--text3)">n=${c.n}</span></span>`;
   };
-  return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${chips}</div>
-    <div style="font-size:11px;color:var(--text);font-weight:500;margin-bottom:8px">${selName} — satisfaction by department × channel</div>
-    <div style="${grid};padding-bottom:7px;border-bottom:1px solid var(--border)"><div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Department</div>${cols.map(c=>`<div style="font-size:10px;font-weight:600;color:${c.col};text-align:right">${c.label}</div>`).join('')}</div>
-    ${rows.map(r=>`<div style="${grid};padding:7px 0;border-bottom:1px solid var(--border);align-items:center"><div style="font-size:11px;color:var(--text2)">${chDeptLabel(r.dept)}</div>${cols.map(c=>`<div style="text-align:right">${cell(r.chs[c.id])}</div>`).join('')}</div>`).join('')}
-    <div style="margin-top:9px;font-size:10px;color:var(--text3);line-height:1.5">Shows avg star rating where rated, else like-rate. Most cells are low-n — feedback join coverage is thin, so read these as hints. A channel that consistently underperforms on satisfaction within a dept is the signal to look for.</div>`;
+  const table=`<div style="${grid};padding-bottom:7px;border-bottom:1px solid var(--border)"><div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Department</div>${cols.map(c=>`<div style="font-size:10px;font-weight:600;color:${c.col};text-align:right">${c.label}</div>`).join('')}</div>
+    ${rows.map(r=>`<div style="${grid};padding:7px 0;border-bottom:1px solid var(--border);align-items:center"><div style="font-size:11px;color:var(--text2)">${chDeptLabel(r.dept)}</div>${cols.map(c=>`<div style="text-align:right">${cell(r.chs[c.id])}</div>`).join('')}</div>`).join('')}`;
+  return strip + table + `<div style="margin-top:9px;font-size:10px;color:var(--text3);line-height:1.5">Like-rate = liked ÷ (liked+disliked+rated) feedback joined to that channel's orders. Cells with n&lt;10 are dimmed. Per-hotel feedback isn't shown — coverage is too thin to be reliable at that level. This is the honest resolution of the taskId join: it works, but only ~2% of feedback prompts get a response.</div>`;
+}
+
+/* ── Trend lines: requests & revenue by channel across months ────────
+   Multi-series line chart in SVG. Optional dept filter. */
+let chTrendMetric='orders';   // 'orders' | 'revenue'
+let chTrendDept='ALL';
+function chSetTrendMetric(m){ chTrendMetric=m; rChannels(); }
+function chSetTrendDept(d){ chTrendDept=d; rChannels(); }
+function chTrendLines(monthly, monthlyRev, monthlyDept, months){
+  const keys=[...months].sort((a,b)=>monthToDate(a)-monthToDate(b));
+  if(keys.length<2) return `<div style="font-size:11px;color:var(--text3)">Select two or more months to see trend lines.</div>`;
+  const cols=CH_DEFS.slice();
+  // build series values per channel
+  const seriesVal=(mk,ch)=>{
+    if(chTrendDept==='ALL'){
+      return chTrendMetric==='orders' ? (monthly[mk]||{})[ch]||0 : (monthlyRev[mk]||{})[ch]||0;
+    }
+    const d=((monthlyDept[mk]||{})[chTrendDept]||{})[ch]||{orders:0,revenue:0};
+    return chTrendMetric==='orders'?d.orders:d.revenue;
+  };
+  const series=cols.map(c=>({c, vals:keys.map(k=>seriesVal(k,c.id))}));
+  const maxV=Math.max(1,...series.flatMap(s=>s.vals));
+  const W=680,Hh=180,padL=44,padB=26,padT=10,padR=10;
+  const plotW=W-padL-padR, plotH=Hh-padT-padB;
+  const x=i=>padL+(keys.length===1?plotW/2:i/(keys.length-1)*plotW);
+  const y=v=>padT+plotH-(v/maxV)*plotH;
+  const fmtV=v=>chTrendMetric==='revenue'?chEur(v):v.toLocaleString();
+  const lines=series.map(s=>{
+    if(s.vals.every(v=>v===0))return'';
+    const pts=s.vals.map((v,i)=>`${x(i)},${y(v)}`).join(' ');
+    const dots=s.vals.map((v,i)=>`<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="${s.c.col}"><title>${s.c.label} ${keys[i]}: ${fmtV(v)}</title></circle>`).join('');
+    return `<polyline points="${pts}" fill="none" stroke="${s.c.col}" stroke-width="2"/>${dots}`;
+  }).join('');
+  // y gridlines (4)
+  const grid=[0,.25,.5,.75,1].map(f=>{const v=maxV*f;const yy=y(v);return `<line x1="${padL}" y1="${yy}" x2="${W-padR}" y2="${yy}" stroke="var(--border)" stroke-width="1"/><text x="${padL-6}" y="${yy+3}" text-anchor="end" font-size="8" fill="var(--text3)">${chTrendMetric==='revenue'?'€'+Math.round(v).toLocaleString():Math.round(v)}</text>`;}).join('');
+  const xlabels=keys.map((k,i)=>`<text x="${x(i)}" y="${Hh-8}" text-anchor="middle" font-size="8" fill="var(--text3)">${fmtMonth(k)}</text>`).join('');
+  const deptOpts=['ALL'].concat(Object.keys(monthlyDept[keys[keys.length-1]]||{}).sort());
+  const controls=`<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+    <div style="display:flex;gap:4px">
+      <button onclick="chSetTrendMetric('orders')" style="cursor:pointer;font-size:10px;padding:3px 10px;border-radius:12px;border:1px solid ${chTrendMetric==='orders'?'var(--text)':'var(--border)'};background:${chTrendMetric==='orders'?'var(--text)':'transparent'};color:${chTrendMetric==='orders'?'var(--bg)':'var(--text2)'}">Requests</button>
+      <button onclick="chSetTrendMetric('revenue')" style="cursor:pointer;font-size:10px;padding:3px 10px;border-radius:12px;border:1px solid ${chTrendMetric==='revenue'?'var(--text)':'var(--border)'};background:${chTrendMetric==='revenue'?'var(--text)':'transparent'};color:${chTrendMetric==='revenue'?'var(--bg)':'var(--text2)'}">Revenue</button>
+    </div>
+    <select onchange="chSetTrendDept(this.value)" style="font-size:10px;padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text2)">
+      ${deptOpts.map(d=>`<option value="${d}"${chTrendDept===d?' selected':''}>${d==='ALL'?'All departments':chDeptLabel(d)}</option>`).join('')}
+    </select>
+    <div style="display:flex;gap:10px;margin-left:auto">${cols.map(c=>`<span style="display:flex;align-items:center;gap:4px;font-size:9px;color:var(--text3)"><span style="width:10px;height:2px;background:${c.col};display:inline-block"></span>${c.label}</span>`).join('')}</div>
+  </div>`;
+  return controls+`<svg viewBox="0 0 ${W} ${Hh}" style="width:100%;height:auto">${grid}${lines}${xlabels}</svg>
+    <div style="margin-top:6px;font-size:10px;color:var(--text3)">${chTrendMetric==='revenue'?'Completed-order revenue':'Order volume'} by channel per month${chTrendDept!=='ALL'?' · '+chDeptLabel(chTrendDept):''}. Hover a point for the value.</div>`;
+}
+
+/* ── Reverse type-mix: for a department, share by channel ────────────── */
+function chDeptChannelMix(deptTotals){
+  const cols=CH_DEFS.slice();
+  const rows=Object.entries(deptTotals).map(([dept,chs])=>({dept,chs,total:Object.values(chs).reduce((a,c)=>a+c.orders,0)}))
+    .filter(r=>r.total>0).sort((a,b)=>b.total-a.total).slice(0,12);
+  if(!rows.length)return'';
+  const grid=`display:grid;grid-template-columns:1.4fr 0.7fr ${cols.map(()=>'1fr').join(' ')};gap:10px`;
+  return `<div style="${grid};padding-bottom:8px;border-bottom:1px solid var(--border)"><div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Department</div><div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);text-align:right">Orders</div>${cols.map(c=>`<div style="font-size:10px;font-weight:600;color:${c.col};text-align:right">${c.label}</div>`).join('')}</div>
+    ${rows.map(r=>`<div style="${grid};padding:7px 0;border-bottom:1px solid var(--border);align-items:center"><div style="font-size:11px;color:var(--text2)">${chDeptLabel(r.dept)}</div><div style="text-align:right;font-size:12px;font-family:var(--serif);color:var(--text2)">${r.total.toLocaleString()}</div>${cols.map(c=>{const o=(r.chs[c.id]||{}).orders||0;const pct=r.total?o/r.total*100:0;return `<div style="text-align:right;font-size:12px;color:${o?'var(--text)':'var(--text3)'}">${o?chPct(pct,0):'—'}</div>`;}).join('')}</div>`).join('')}
+    <div style="margin-top:9px;font-size:10px;color:var(--text3);line-height:1.5">For each department, what share of its orders came through each channel. Rows read across to 100%. The mirror of "what each channel is used for".</div>`;
 }
 
 function chOverlap(overlap) {
@@ -5609,7 +5728,9 @@ async function rChannels() {
   body.innerHTML = `<div class="fu-loading"><div class="fu-spinner"></div>Reading order sources...</div>`;
   let agg; try { agg = await chAggregate(); } catch (e) { body.innerHTML = `<div style="font-size:11px;color:var(--red);padding:10px">Channel analysis failed: ${e.message}</div>`; return; }
   const { buckets, monthly, overlap, excludedDept, totalRows, droppedHotel, andermattHeld, months,
-          hotelDeptCh, fbHotelDeptCh, firstChannel, journeyGuests, journeyRepeat } = agg;
+          hotelDeptCh, firstChannel, journeyGuests, journeyRepeat,
+          monthlyRev, monthlyDept, deptTotals, chDeptFb, itemIndex } = agg;
+  chItemIndexCache = itemIndex || [];
   const period = selM.size === 1 ? fmtMonth([...selM][0]) : `${selM.size} months`;
   if (sub) sub.textContent = `${period} · ${totalRows.toLocaleString()} valid orders · split by createdBy.source`;
   if (!totalRows) { body.innerHTML = emptyState('No valid orders for the selected months and hotels'); return; }
@@ -5631,19 +5752,22 @@ async function rChannels() {
   // conversion-rate box removed per request; kept a one-line source note only
   const caveat = `<div style="font-size:10px;color:var(--text3);line-height:1.5;margin-bottom:16px">
     From uploaded task reports, same math as the monthly Area GM deck. Revenue = completed In-Room Dining + SPA + Store.
-    ${excludedDept ? `${excludedDept.toLocaleString()} Valet/Concierge/Guest-Experience orders excluded per report policy. ` : ''}${andermattHeld ? `${andermattHeld.toLocaleString()} Andermatt orders held out — toggle in the filter bar to include.` : ''}
+    ${excludedDept ? `${excludedDept.toLocaleString()} Valet/Concierge/Guest-Experience orders excluded per report policy. ` : ''}${andermattHeld ? `${andermattHeld.toLocaleString()} Andermatt orders excluded — select it in the hotel dropdown to include.` : ''}
   </div>`;
 
   const sec = (t, s, c) => `<div style="margin-top:24px"><div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text2);font-weight:500">${t}</div>${s ? `<div style="font-size:10px;color:var(--text3);margin-top:2px;margin-bottom:10px">${s}</div>` : '<div style="height:10px"></div>'}${c}</div>`;
 
   body.innerHTML = headline + caveat + chShareBar(buckets, 'orders')
     + sec('Channel comparison', 'Volume, money, fulfilment, guest behaviour and satisfaction side by side', chComparison(buckets))
+    + sec('Trend by channel', 'Requests or revenue per month, optionally filtered to a department', chTrendLines(monthly, monthlyRev, monthlyDept, months))
     + sec('First order & repeat behaviour', 'Which channel guests start with, and whether they come back through the same one', chFirstOrder(firstChannel, journeyGuests, journeyRepeat))
     + sec('What each channel is used for', 'Request-type mix within each channel', chTypeMix(buckets))
-    + sec('Top items by channel', 'What guests actually order through each guest channel', chItems(buckets))
+    + sec('What channel each department uses', 'The reverse: for each department, the channel split of its orders', chDeptChannelMix(deptTotals))
+    + sec('Top items', 'Filter by hotel and department; optionally by time of day', chItemsFiltered(hotelDeptCh))
     + sec('When guests order', 'Hourly distribution, guest channels', chHourly(buckets))
-    + sec('Channel mix by hotel', 'Pick a hotel to see which department is ordered through which channel', chHotelDrill(hotelDeptCh))
-    + sec('Satisfaction by channel', 'Pick a hotel to see department × channel feedback', chFeedbackDrill(fbHotelDeptCh))
+    + sec('Channel mix by hotel', 'Total requests, then each channel share', chByHotel(buckets))
+    + sec('Department × channel drill-down', 'Pick a hotel to see which department is ordered through which channel', chHotelDrill(hotelDeptCh))
+    + sec('Satisfaction by channel', 'Like-rate by channel, and by department × channel (portfolio level)', chFeedback(buckets, chDeptFb))
     + sec('Guests using more than one channel', 'Overlap across the selected period', chOverlap(overlap))
     + sec('How the mix is shifting', 'Share of orders by month', chTrend(monthly, months));
 }
