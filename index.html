@@ -5507,7 +5507,7 @@ function chComparison(buckets) {
     { k: 'Completed', f: b => `${b.completed.toLocaleString()} <span style="color:var(--text3);font-size:10px">${chPct(b.compPct)}</span>` },
     { k: 'Cancelled', f: b => `${b.cancelled.toLocaleString()} <span style="color:var(--text3);font-size:10px">${chPct(b.cancPct)}</span>${lowN(b.orders)}` },
     { k: 'Revenue', f: b => chEur(b.revenue), strong: 1, gap: 1 },
-    { k: 'Avg order value', f: b => b.aov == null ? '—' : `${chEur(b.aov)} <span style="color:var(--text3);font-size:10px">n=${b.aovBase}</span>`, strong: 1 },
+    { k: 'Avg order value', f: b => b.aov == null ? '—' : `<span${b.aovBase<40?' style="opacity:.55" title="Only '+b.aovBase+' paid orders — treat as indicative"':''}>${chEur(b.aov)} <span style="color:var(--text3);font-size:10px">n=${b.aovBase}${b.aovBase<40?' ·low n':''}</span></span>`, strong: 1 },
     { k: 'Median order value', f: b => chEur(b.medianValue) },
     { k: 'Delivery-charge revenue', f: b => chEur(b.deliveryRev) },
     { k: 'Revenue lost to cancellations', f: b => chEur(b.revenueCancelled) },
@@ -5540,13 +5540,17 @@ function chTypeMix(buckets) {
 function chHourly(buckets) {
   const cols = CH_DEFS.filter(c => buckets[c.id].orders > 0 && c.guest);
   const max = Math.max(1, ...cols.map(c => Math.max(...buckets[c.id].byHour)));
+  // per-hour totals across guest channels, for share-in-tooltip
+  const hourTot = h => cols.reduce((a,c)=>a+buckets[c.id].byHour[h],0);
   return `<div style="display:flex;gap:2px;align-items:flex-end;height:90px;margin-bottom:4px">
-    ${new Array(24).fill(0).map((_, h) => `<div style="flex:1;display:flex;flex-direction:column-reverse;gap:1px;height:100%" title="${String(h).padStart(2, '0')}:00">${cols.map(c => { const v = buckets[c.id].byHour[h]; return v > 0 ? `<div style="height:${(v / max * 100).toFixed(1)}%;background:${c.col};border-radius:1px" title="${c.label} ${h}:00 — ${v}"></div>` : ''; }).join('')}</div>`).join('')}
+    ${new Array(24).fill(0).map((_, h) => { const ht=hourTot(h);
+      const summary = cols.map(c=>{const v=buckets[c.id].byHour[h];return v>0?`${c.label} ${v} (${ht?Math.round(v/ht*100):0}%)`:null;}).filter(Boolean).join('  ·  ');
+      return `<div style="flex:1;display:flex;flex-direction:column-reverse;gap:1px;height:100%" title="${String(h).padStart(2,'0')}:00 — ${summary||'no orders'}">${cols.map(c => { const v = buckets[c.id].byHour[h]; return v > 0 ? `<div style="height:${(v / max * 100).toFixed(1)}%;background:${c.col};border-radius:1px" title="${c.label} ${String(h).padStart(2,'0')}:00 — ${v} orders, ${ht?Math.round(v/ht*100):0}% of this hour"></div>` : ''; }).join('')}</div>`; }).join('')}
   </div>
   <div style="display:flex;gap:2px;margin-bottom:6px">
     ${new Array(24).fill(0).map((_, h) => `<div style="flex:1;text-align:center;font-size:8px;color:var(--text3)">${h % 3 === 0 ? String(h).padStart(2,'0') : ''}</div>`).join('')}
   </div>
-  <div style="margin-top:8px;font-size:10px;color:var(--text3)">Guest channels only, stacked per hour, scaled to the busiest hour. Server time. Tests the late-night chat hypothesis directly.</div>`;
+  <div style="margin-top:8px;font-size:10px;color:var(--text3)">Guest channels only, stacked per hour, scaled to the busiest hour. Hover any hour to see the chat-vs-app split for that hour. Server time.</div>`;
 }
 
 function chByHotel(buckets) {
@@ -5660,8 +5664,8 @@ function chHotelDrill(hotelDeptCh){
   detail=`<div style="margin-top:14px">
     <div style="font-size:11px;color:var(--text);font-weight:500;margin-bottom:8px">${selName} — department × channel (orders)</div>
     <div style="${grid};padding-bottom:7px;border-bottom:1px solid var(--border)"><div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Department</div>${cols.map(c=>`<div style="font-size:10px;font-weight:600;color:${c.col};text-align:right">${c.label}</div>`).join('')}<div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);text-align:right">Total</div></div>
-    ${deptRows.map(r=>`<div style="${grid};padding:7px 0;border-bottom:1px solid var(--border);align-items:center"><div style="font-size:11px;color:var(--text2)">${chDeptLabel(r.dept)}</div>${cols.map(c=>{const o=(r.chs[c.id]||{}).orders||0;return `<div style="text-align:right;font-size:12px;color:${o?'var(--text)':'var(--text3)'}">${o||'—'}</div>`;}).join('')}<div style="text-align:right;font-size:12px;font-family:var(--serif)">${r.total}</div></div>`).join('')}
-    <div style="margin-top:8px;font-size:10px;color:var(--text3)">Highest dept×channel cell shows which service guests reach for through which channel at this hotel.</div>
+    ${deptRows.map(r=>`<div style="${grid};padding:7px 0;border-bottom:1px solid var(--border);align-items:center"><div style="font-size:11px;color:var(--text2)">${chDeptLabel(r.dept)}</div>${cols.map(c=>{const o=(r.chs[c.id]||{}).orders||0;const pct=r.total?o/r.total*100:0;return `<div style="text-align:right;font-size:12px;color:${o?'var(--text)':'var(--text3)'}" title="${o} orders">${o?Math.round(pct)+'%':'—'}</div>`;}).join('')}<div style="text-align:right;font-size:12px;font-family:var(--serif);font-weight:600">${r.total}</div></div>`).join('')}
+    <div style="margin-top:8px;font-size:10px;color:var(--text3)">Each row shows the % of that department's orders via each channel (rows read across to 100%); Total is the order count. Hover a cell for the raw number.</div>
   </div>`;
   return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px">${chips}</div>${detail}`;
 }
