@@ -1567,14 +1567,37 @@ const sb = {
   },
 
   async upsertRows(key, data) {
-    return this.query('rows', 'POST', {key, data, saved_at: new Date().toISOString()});
+    // A whole month in one JSONB cell can exceed Postgres' statement timeout on write
+    // (error 57014). Split into chunks of ~2000 rows across keyed sub-rows and record a
+    // manifest so getRows can reassemble. Small datasets still write as a single row.
+    const CHUNK = 2000;
+    // clear any previous chunks/manifest for this key first
+    try { await this.query(`rows?key=like.${encodeURIComponent(key + '%')}`, 'DELETE'); } catch(e){}
+    if (data.length <= CHUNK) {
+      return this.query('rows', 'POST', {key, data, saved_at: new Date().toISOString()});
+    }
+    const parts = Math.ceil(data.length / CHUNK);
+    for (let i = 0; i < parts; i++) {
+      await this.query('rows', 'POST', {key: `${key}#${i}`, data: data.slice(i*CHUNK, (i+1)*CHUNK), saved_at: new Date().toISOString()});
+    }
+    // manifest row tells getRows how many parts to fetch
+    return this.query('rows', 'POST', {key, data: {__chunked: parts, __count: data.length}, saved_at: new Date().toISOString()});
   },
   async getRows(key) {
     const rows = await this.query('rows', 'GET', null, {key});
-    return rows?.[0]?.data || [];
+    const d = rows?.[0]?.data;
+    if (d && d.__chunked) {
+      let all = [];
+      for (let i = 0; i < d.__chunked; i++) {
+        const part = await this.query('rows', 'GET', null, {key: `${key}#${i}`});
+        if (part?.[0]?.data) all = all.concat(part[0].data);
+      }
+      return all;
+    }
+    return d || [];
   },
   async deleteRows(key) {
-    return this.query(`rows?key=eq.${encodeURIComponent(key)}`, 'DELETE');
+    return this.query(`rows?key=like.${encodeURIComponent(key + '%')}`, 'DELETE');
   },
   async clearAll() {
     await this.query('summaries?month_key=neq.___none___', 'DELETE');
@@ -1762,20 +1785,51 @@ function slimStays(r) {
 }
 
 function slimTasks(r) {
+  // Source normally in the flat 'createdBy.source' column. Some months (e.g. Jul)
+  // ship it only inside a nested 'createdBy' JSON blob. Recover it so channel
+  // attribution works across every schema variant.
+  let src = r['createdBy.source'] || '';
+  if (!src && r.createdBy) {
+    try {
+      const cb = typeof r.createdBy === 'object' ? r.createdBy : JSON.parse(String(r.createdBy).replace(/'/g,'"'));
+      let s = cb && cb.source;
+      if (s && typeof s === 'object') s = s.S || s.s || '';   // DynamoDB {"S":"LUNA"}
+      src = s || '';
+    } catch(e){ /* leave blank */ }
+  }
+  // Metadata blob averages ~470 chars and is mostly image URLs, thumbhashes and
+  // ids the dashboard never reads. Storing it whole made a month's rows a multi-MB
+  // JSONB cell that timed out on write (Postgres 57014). Keep only what's used.
+  let slimMeta = '';
+  if (r.metadata) {
+    try {
+      const m = typeof r.metadata === 'object' ? r.metadata
+        : JSON.parse(String(r.metadata).replace(/Decimal\('?([\d.]+)'?\)/g,'$1').replace(/\bTrue\b/g,'true').replace(/\bFalse\b/g,'false').replace(/\bNone\b/g,'null').replace(/'/g,'"'));
+      const dv = v => (v && typeof v==='object' && ('S'in v||'N'in v)) ? (v.S ?? v.N) : v;
+      const compact = {};
+      if (m.totalAmount != null) compact.totalAmount = dv(m.totalAmount);
+      let items = m.items; if (items && items.L) items = items.L;
+      if (Array.isArray(items)) compact.items = items.map(it => { const x=(it&&it.M)?it.M:it;
+        return { name: dv(x.name), price: dv(x.price), quantity: dv(x.quantity), numberOfGuests: dv(x.numberOfGuests) }; });
+      let oc = m.otherCharges; if (oc && oc.L) oc = oc.L;
+      if (Array.isArray(oc)) compact.otherCharges = oc.map(c => { const x=(c&&c.M)?c.M:c; return { price: dv(x.price) }; });
+      slimMeta = JSON.stringify(compact);
+    } catch(e){ slimMeta = ''; }
+  }
   return {
-    id: r.id||'',
-    hotelId: r.hotelId||'',
+    id: r.id||r.requestId||'',
+    hotelId: r.hotelId||r.HotelId||'',
     requestType: r.requestType||'',
     status: r.status||'',
     roomNumber: String(r.roomNumber||'').trim(),
     guestId: r.guestId||'',
     createdAt: r.createdAt||'',
-    lastStatusUpdatedAt: r.lastStatusUpdatedAt||'',
+    lastStatusUpdatedAt: r.lastStatusUpdatedAt||r.updatedAt||'',
     parentTaskId: r.parentTaskId||'',
     tags: String(r.tags||''),
-    'createdBy.source': r['createdBy.source']||'',
+    'createdBy.source': src,
     'metadata.totalAmount': parseFloat(r['metadata.totalAmount'])||0,
-    metadata: String(r.metadata||''),
+    metadata: slimMeta,
   };
 }
 
@@ -1792,6 +1846,7 @@ function slimFeedback(r) {
     star_rating: r.star_rating||'',
     reaction: r.reaction||'',
     requestType,
+    taskId: r.taskId||r.task_id||'',
     createdAt: r.createdAt||r.created_at||'',
     comments: String(r.comments||'').trim(),
   };
@@ -2633,7 +2688,7 @@ function toggleHotelByIdx(i) {
 
 function selAll(type) {
   if(type==='month') MONTHS.forEach(m=>selM.add(m));
-  else H.forEach(h=>selH.add(h.n));
+  else H.forEach(h=>{ if(h.id!==ANDERMATT_ID) selH.add(h.n); });
   updateFilterBars(); updateFilterLabels(); renderAll();
 }
 
@@ -2652,7 +2707,7 @@ function selLast(type, n) {
 }
 
 function resetFilters() {
-  H.forEach(h=>selH.add(h.n));
+  H.forEach(h=>{ if(h.id!==ANDERMATT_ID) selH.add(h.n); });
   updateFilterBars(); updateFilterLabels(); renderAll();
 }
 
@@ -5261,7 +5316,12 @@ const CH_DEFS = [
   { id:'staff',    label:'Staff (Luna)', sources:['LUNA'],           col:'#888780', guest:false },
 ];
 function chChannelOf(row){
-  const s=String(row['createdBy.source']||'').toUpperCase().trim();
+  let s=String(row['createdBy.source']||'').toUpperCase().trim();
+  if(!s && row.createdBy){ // recover from nested blob (Jul schema)
+    try{ const cb=typeof row.createdBy==='object'?row.createdBy:JSON.parse(String(row.createdBy).replace(/'/g,'"'));
+      let v=cb&&cb.source; if(v&&typeof v==='object')v=v.S||v.s||''; s=String(v||'').toUpperCase().trim();
+    }catch(e){}
+  }
   if(s==='GENIE')return 'app'; if(s==='GENIE_CHAT')return 'chat';
   if(s==='GENIE_WHATSAPP')return 'whatsapp'; return 'staff';
 }
@@ -8776,7 +8836,7 @@ async function init() {
   }
 
   // Init hotel filter with all selected
-  H.forEach(h=>selH.add(h.n));
+  H.forEach(h=>{ if(h.id!==ANDERMATT_ID) selH.add(h.n); });
 
   // Auto-select latest month if any
   if (MONTHS.length) {
