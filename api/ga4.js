@@ -615,7 +615,7 @@ module.exports = async (req, res) => {
     const keyRaw = process.env.GA4_SERVICE_ACCOUNT_KEY;
     if (!keyRaw) throw new Error('GA4_SERVICE_ACCOUNT_KEY env var not set');
     const serviceAccount = JSON.parse(keyRaw);
-    const { report = 'screen_views', startDate = '30daysAgo', endDate = 'today', prevStartDate, prevEndDate, hotelId, excludeTest = 'false', multi } = req.query || {};
+    const { report = 'screen_views', startDate = '30daysAgo', endDate = 'today', prevStartDate, prevEndDate, hotelId, excludeTest = 'false', os, deviceCategory, multi } = req.query || {};
 
     // Shared filter application
     function applyFilters(body) {
@@ -626,6 +626,23 @@ module.exports = async (req, res) => {
       if (excludeTest === 'true') {
         const ef = { notExpression: { filter: { fieldName: 'customUser:environment', stringFilter: { value: 'development' } } } };
         body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, ef] } } : ef;
+      }
+      // Device filters (multiselect). os → operatingSystem, deviceCategory → deviceCategory.
+      // Comma-joined values become an inListFilter (GA4 native "value in set").
+      // Both compose with AND against each other and any existing dimensionFilter.
+      if (os) {
+        const values = os.split(',').map(s => s.trim()).filter(Boolean);
+        if (values.length) {
+          const df = { filter: { fieldName: 'operatingSystem', inListFilter: { values } } };
+          body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, df] } } : df;
+        }
+      }
+      if (deviceCategory) {
+        const values = deviceCategory.split(',').map(s => s.trim()).filter(Boolean);
+        if (values.length) {
+          const df = { filter: { fieldName: 'deviceCategory', inListFilter: { values } } };
+          body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, df] } } : df;
+        }
       }
       return body;
     }
@@ -641,7 +658,7 @@ module.exports = async (req, res) => {
     if (multi) {
       const names = multi.split(',').map(s => s.trim()).filter(Boolean);
       const wantPrev = prevStartDate && prevEndDate;
-      const cacheKey = `multi:${names.join(',')}:${startDate}:${endDate}:${wantPrev?prevStartDate+':'+prevEndDate:''}:${hotelId||''}:${excludeTest}`;
+      const cacheKey = `multi:${names.join(',')}:${startDate}:${endDate}:${wantPrev?prevStartDate+':'+prevEndDate:''}:${hotelId||''}:${excludeTest}:${os||''}:${deviceCategory||''}`;
       if (_cache[cacheKey] && Date.now() - _cache[cacheKey].ts < CACHE_TTL) {
         res.status(200).json(_cache[cacheKey].data); return;
       }
@@ -677,7 +694,7 @@ module.exports = async (req, res) => {
     }
 
     // ── SINGLE REPORT MODE ──
-    const cacheKey = `${report}:${startDate}:${endDate}:${hotelId||''}:${excludeTest}`;
+    const cacheKey = `${report}:${startDate}:${endDate}:${hotelId||''}:${excludeTest}:${os||''}:${deviceCategory||''}`;
     if (_cache[cacheKey] && Date.now() - _cache[cacheKey].ts < CACHE_TTL) {
       res.status(200).json(_cache[cacheKey].data); return;
     }

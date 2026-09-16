@@ -723,6 +723,26 @@ body.show-engg .engg-note { display: block !important; }
       Exclude test data
     </label>
     <div style="width:1px;height:20px;background:var(--border)"></div>
+    <span style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3)">OS</span>
+    <div class="aa-ms" style="position:relative">
+      <button type="button" id="aa-os-btn" onclick="aaMsToggle('os')" style="font-size:10px;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-family:var(--sans);cursor:pointer;min-width:70px;text-align:left">All</button>
+      <div id="aa-os-menu" style="display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:50;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px;min-width:130px;box-shadow:0 4px 12px rgba(0,0,0,0.15)">
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);padding:3px 4px;cursor:pointer"><input type="checkbox" value="iOS" onchange="aaMsChange('os')" style="accent-color:var(--teal)">iOS</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);padding:3px 4px;cursor:pointer"><input type="checkbox" value="Android" onchange="aaMsChange('os')" style="accent-color:var(--teal)">Android</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);padding:3px 4px;cursor:pointer"><input type="checkbox" value="Windows" onchange="aaMsChange('os')" style="accent-color:var(--teal)">Windows</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);padding:3px 4px;cursor:pointer"><input type="checkbox" value="Macintosh" onchange="aaMsChange('os')" style="accent-color:var(--teal)">Macintosh</label>
+      </div>
+    </div>
+    <span style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3)">Device</span>
+    <div class="aa-ms" style="position:relative">
+      <button type="button" id="aa-dev-btn" onclick="aaMsToggle('dev')" style="font-size:10px;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-family:var(--sans);cursor:pointer;min-width:70px;text-align:left">All</button>
+      <div id="aa-dev-menu" style="display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:50;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px;min-width:120px;box-shadow:0 4px 12px rgba(0,0,0,0.15)">
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);padding:3px 4px;cursor:pointer"><input type="checkbox" value="mobile" onchange="aaMsChange('dev')" style="accent-color:var(--teal)">mobile</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);padding:3px 4px;cursor:pointer"><input type="checkbox" value="tablet" onchange="aaMsChange('dev')" style="accent-color:var(--teal)">tablet</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);padding:3px 4px;cursor:pointer"><input type="checkbox" value="desktop" onchange="aaMsChange('dev')" style="accent-color:var(--teal)">desktop</label>
+      </div>
+    </div>
+    <div style="width:1px;height:20px;background:var(--border)"></div>
     <label style="font-size:10px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none" title="Show/hide engineering instrumentation warnings throughout the dashboard">
       <input type="checkbox" id="aa-show-engg" onchange="document.body.classList.toggle('show-engg', this.checked)" style="margin:0;accent-color:var(--amber)">
       Engg notes
@@ -1012,14 +1032,9 @@ body.show-engg .engg-note { display: block !important; }
       <div id="aa-notif-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
     </div>
 
-    <!-- Section 5: App health -->
-    <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px;margin-top:6px">App health</div>
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-head">
-        <div><div class="card-title">App health metrics</div><div class="card-sub">Crashes · uninstalls · installs · sustainability</div></div>
-      </div>
-      <div id="aa-health-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
-    </div>
+    <!-- Section 5 (App health) removed in v60 — not useful for now. app_health /
+         crashes_by_hotel are still fetched because the Hotel Comparison matrix
+         consumes crash data per hotel. -->
 
     <!-- Section 6: Data quality & gaps (collapsed) -->
     <div class="card last">
@@ -4816,6 +4831,8 @@ let aaEndDate = _curBounds.end;
 let aaIsMonthMode = true; // false when "Last 7 days" is active
 let aaHotelId = '';
 let aaExcludeTest = false; // Enable after environment dimension has data (~24-48h after registration)
+let aaOs = [];             // multiselect: operatingSystem (iOS, Android, Windows, Macintosh). Empty = all.
+let aaDeviceCategory = []; // multiselect: deviceCategory (mobile, tablet, desktop). Empty = all.
 let aaCache = {};
 let aaLoaded = false;
 let aaOpenDepts = new Set();
@@ -4907,6 +4924,33 @@ function aaToggleExcludeTest(checked) {
   aaLoad(true);
 }
 
+// ── Device multiselect (OS + device category) ──
+// Two independent dropdowns. Each composes with AND server-side (see ga4.js
+// applyFilters). Empty selection = no filter (All). Reloads on change.
+function aaMsToggle(which) {
+  const menu = document.getElementById(which === 'os' ? 'aa-os-menu' : 'aa-dev-menu');
+  const other = document.getElementById(which === 'os' ? 'aa-dev-menu' : 'aa-os-menu');
+  if (other) other.style.display = 'none';
+  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+function aaMsChange(which) {
+  const menuId = which === 'os' ? 'aa-os-menu' : 'aa-dev-menu';
+  const btnId = which === 'os' ? 'aa-os-btn' : 'aa-dev-btn';
+  const checked = Array.from(document.querySelectorAll(`#${menuId} input:checked`)).map(i => i.value);
+  if (which === 'os') aaOs = checked; else aaDeviceCategory = checked;
+  const btn = document.getElementById(btnId);
+  btn.textContent = checked.length === 0 ? 'All' : (checked.length <= 2 ? checked.join(', ') : `${checked.length} selected`);
+  aaCache = {}; aaLoaded = false; aaOpenDepts.clear(); aaMomCache = null;
+  aaLoad(true);
+}
+// Close dropdowns when clicking outside
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.aa-ms')) {
+    const a = document.getElementById('aa-os-menu'); if (a) a.style.display = 'none';
+    const b = document.getElementById('aa-dev-menu'); if (b) b.style.display = 'none';
+  }
+});
+
 function aaToggleGap() {
   const b = document.getElementById('aa-gap-body');
   const t = document.getElementById('aa-gap-toggle');
@@ -4915,11 +4959,13 @@ function aaToggleGap() {
 }
 
 async function aaFetch(report) {
-  const key = `${report}:${aaStartDate}:${aaEndDate}:${aaHotelId}:${aaExcludeTest}`;
+  const key = `${report}:${aaStartDate}:${aaEndDate}:${aaHotelId}:${aaExcludeTest}:${aaOs.join(',')}:${aaDeviceCategory.join(',')}`;
   if (aaCache[key]) return aaCache[key];
   let url = `${AA_FN}?report=${report}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
   if (aaHotelId) url += `&hotelId=${aaHotelId}`;
   if (aaExcludeTest) url += `&excludeTest=true`;
+  if (aaOs.length) url += `&os=${encodeURIComponent(aaOs.join(','))}`;
+  if (aaDeviceCategory.length) url += `&deviceCategory=${encodeURIComponent(aaDeviceCategory.join(','))}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${report} failed: ${res.status}`);
   const data = await res.json();
@@ -5124,6 +5170,8 @@ async function aaLoad(force = false) {
     }
     if (aaHotelId) multiUrl += `&hotelId=${aaHotelId}`;
     if (aaExcludeTest) multiUrl += `&excludeTest=true`;
+    if (aaOs.length) multiUrl += `&os=${encodeURIComponent(aaOs.join(','))}`;
+    if (aaDeviceCategory.length) multiUrl += `&deviceCategory=${encodeURIComponent(aaDeviceCategory.join(','))}`;
 
     const multiRes = await fetch(multiUrl);
     if (!multiRes.ok) throw new Error(`Load failed: ${multiRes.status}`);
@@ -5155,7 +5203,7 @@ async function aaLoad(force = false) {
 
     // Populate client cache so dept-card lazy loads (e.g. Store funnel reusing
     // screen_views) don't re-hit the API.
-    const ck = (r) => `${r}:${aaStartDate}:${aaEndDate}:${aaHotelId}:${aaExcludeTest}`;
+    const ck = (r) => `${r}:${aaStartDate}:${aaEndDate}:${aaHotelId}:${aaExcludeTest}:${aaOs.join(',')}:${aaDeviceCategory.join(',')}`;
     aaCache[ck('booking_funnel')] = funnel;
     aaCache[ck('screen_views')] = screens;
     aaCache[ck('abandon_by_step')] = abandon;
@@ -5194,7 +5242,8 @@ async function aaLoad(force = false) {
     aaRenderDeptPills(funnel, screens);
     aaRenderRecs(recs);
     aaRenderNotifications(notifs);
-    aaRenderAppHealth(health, screens);
+    // aaRenderAppHealth removed in v60 (App Health card gone). `health` still
+    // fetched + cached above for the Hotel Comparison matrix.
 
     const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     const updEl = document.getElementById('aa-updated');
@@ -5496,7 +5545,8 @@ function chShareBar(buckets, metric) {
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:10px;margin-bottom:4px">
     ${live.map(c => `<div style="display:flex;align-items:baseline;gap:7px"><span style="width:8px;height:8px;border-radius:2px;background:${c.col};flex-shrink:0"></span><div style="min-width:0"><div style="font-size:11px;color:var(--text)">${c.label}</div><div style="font-size:9px;color:var(--text3);margin-top:1px">${buckets[c.id].orders.toLocaleString()} orders · ${chEur(buckets[c.id].revenue)}</div></div></div>`).join('')}
-  </div>`;
+  </div>
+  <div style="font-size:9px;color:var(--text3);margin-top:2px">Share of <b>all</b> orders including staff (Luna). This differs from the "% conversational" figure above, which is measured against guest orders only.</div>`;
 }
 
 function chComparison(buckets) {
@@ -5805,7 +5855,7 @@ async function rChannels() {
   const aovDelta = (buckets.chat.aov != null && buckets.app.aov != null) ? buckets.chat.aov - buckets.app.aov : null;
 
   const headline = `<div style="display:flex;gap:26px;flex-wrap:wrap;align-items:baseline;padding:12px 14px;background:var(--bg2);border-radius:6px;margin-bottom:16px">
-    <div><div style="font-family:var(--serif);font-size:20px;font-weight:600">${chPct(guestTot ? convTot / guestTot * 100 : 0)}</div><div style="font-size:10px;color:var(--text3)">of guest orders are conversational</div></div>
+    <div><div style="font-family:var(--serif);font-size:20px;font-weight:600">${chPct(guestTot ? convTot / guestTot * 100 : 0)}</div><div style="font-size:10px;color:var(--text3)">of <b>guest</b> orders are conversational<br><span style="opacity:.7">(chat+WhatsApp ÷ guest orders, excl. staff)</span></div></div>
     <div><div style="font-family:var(--serif);font-size:20px;font-weight:600">${chEur(totalRev)}</div><div style="font-size:10px;color:var(--text3)">total order revenue</div></div>
     <div><div style="font-family:var(--serif);font-size:20px;font-weight:600">${aovDelta == null ? '—' : (aovDelta >= 0 ? '+' : '') + chEur(aovDelta)}</div><div style="font-size:10px;color:var(--text3)">chat AOV vs app AOV</div></div>
     <div style="margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:6px">
@@ -8388,35 +8438,7 @@ function aaRenderNotifications(data) {
     </div>`;
 }
 
-function aaRenderAppHealth(data, screensData) {
-  const el = document.getElementById('aa-health-body');
-  if (!el) return;
-  const rows = aaRows(data);
-  const get = name => rows.find(r => r.eventName === name)?.eventCount || 0;
-  const crashes = get('app_exception');
-  const uninstalls = get('app_remove');
-  const installs = get('first_open');
-  const updates = get('app_update');
-  const sessions = get('app_session_start');
-  const sustTray = get('sustainability_tray_opened');
-  const sustDone = get('sustainability_action_completed');
-  const sustRate = sustTray > 0 ? Math.round(sustDone/sustTray*100) : 0;
-  const crashRate = sessions > 0 ? (crashes/sessions*100).toFixed(2) : '—';
-  const retentionProxy = installs > 0 ? Math.round((1 - uninstalls/installs)*100) : null;
-
-  el.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
-      <div class="aa-stat"><div class="aa-stat-label">App crashes</div><div class="aa-stat-val" style="color:${crashes>100?'var(--red)':crashes>30?'var(--amber)':'var(--text)'}">${crashes.toLocaleString()}</div><div class="aa-stat-sub">${crashRate}% of sessions</div></div>
-      <div class="aa-stat"><div class="aa-stat-label">New installs</div><div class="aa-stat-val">${installs.toLocaleString()}</div><div class="aa-stat-sub">first_open events</div></div>
-      <div class="aa-stat"><div class="aa-stat-label">Uninstalls</div><div class="aa-stat-val" style="color:${uninstalls>installs?'var(--red)':'var(--text)'}">${uninstalls.toLocaleString()}</div><div class="aa-stat-sub">${retentionProxy!==null?retentionProxy+'% install retention':''}</div></div>
-      <div class="aa-stat"><div class="aa-stat-label">Sessions</div><div class="aa-stat-val">${sessions.toLocaleString()}</div><div class="aa-stat-sub">app opens</div></div>
-      <div class="aa-stat"><div class="aa-stat-label">App updates</div><div class="aa-stat-val">${updates.toLocaleString()}</div><div class="aa-stat-sub">guests updated the app</div></div>
-      <div class="aa-stat"><div class="aa-stat-label">Sustainability</div><div class="aa-stat-val">${sustTray.toLocaleString()}</div><div class="aa-stat-sub">${sustRate}% action completion</div></div>
-    </div>
-    ${crashes > 0 ? `<div style="background:${crashes>100?'var(--red-l)':'var(--amber-l)'};border:1px solid ${crashes>100?'var(--red)':'var(--amber)'};border-radius:var(--radius-sm);padding:10px 12px;font-size:11px;color:${crashes>100?'var(--red-d)':'var(--amber-d)'};line-height:1.6">
-      ${crashes>100?'⚠ High crash count':'ℹ Crashes detected'} — ${crashes.toLocaleString()} app_exception events in this period. Share this with engineering to investigate stack traces in Firebase Crashlytics.
-    </div>` : '<div style="font-size:11px;color:var(--teal-d);background:var(--teal-l);border-radius:var(--radius-sm);padding:8px 12px">✓ No crashes detected in this period.</div>'}`;
-}
+/* aaRenderAppHealth removed in v60 — App Health card deprecated. */
 
 /* ══════════════════════════════════════════════════════════
    KANBAN TASK BOARD
