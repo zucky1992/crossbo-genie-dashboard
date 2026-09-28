@@ -249,6 +249,13 @@ html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--t
 .fu-insight-row.alert{border-left-color:var(--red)}
 /* ── APP ANALYTICS DEPT CARDS ── */
 .aa-dept-card{transition:all .15s}
+.aa-subtabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin:6px 0 18px}
+.aa-subtab{font-size:12px;font-weight:500;padding:9px 16px;border:none;background:none;color:var(--text3);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;font-family:var(--sans)}
+.aa-subtab.active{color:var(--text);border-bottom-color:var(--teal)}
+.aa-blocks{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:14px}
+@media(max-width:1000px){.aa-blocks{grid-template-columns:1fr}}
+.aa-block{border:1px solid var(--border);border-radius:var(--radius-sm);padding:13px 14px;background:var(--bg)}
+.aa-block-h{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text2);font-weight:600;margin-bottom:10px}
 .aa-dept-head{display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none}
 .aa-chevron{transition:transform .2s;flex-shrink:0}
 .aa-chevron.open{transform:rotate(180deg)}
@@ -754,6 +761,13 @@ body.show-engg .engg-note { display: block !important; }
     <!-- v50: Instrumentation coverage indicator -->
     <div id="aa-coverage-bar" style="margin-bottom:14px"></div>
 
+    <!-- v61: sub-tabs (declutter) -->
+    <div class="aa-subtabs">
+      <button class="aa-subtab active" id="aa-subtab-overview" onclick="aaShowSubtab('overview')">Overview</button>
+      <button class="aa-subtab" id="aa-subtab-byscreen" onclick="aaShowSubtab('byscreen')">By screen</button>
+    </div>
+    <div id="aa-tab-overview">
+
     <!-- v53: FEATURE SCORECARD — leadership's primary question is "which
          feature works", so it sits above everything. Three groups, three
          shapes: discovery surfaces have only a share (bar), engagement
@@ -855,6 +869,10 @@ body.show-engg .engg-note { display: block !important; }
         <div class="fu-loading"><div class="fu-spinner"></div>Comparing hotels...</div>
       </div>
     </div>
+
+    </div><!-- /aa-tab-overview -->
+    <div id="aa-tab-byscreen" style="display:none">
+    <div class="grey-note" style="font-size:11px;color:var(--text3);margin-bottom:14px">Pick a screen. Each opens three blocks: <b>Clicks</b> (what guests tap), <b>Drop-off</b> (where they leave), <b>Didn't buy</b> (interested but no purchase).</div>
 
     <!-- Section 2: Department cards -->
     <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px">By department · drill down</div>
@@ -1013,6 +1031,9 @@ body.show-engg .engg-note { display: block !important; }
 
     <!-- Home screen -->
 
+    </div><!-- /aa-tab-byscreen -->
+    <div id="aa-tab-overview-2">
+
     <!-- Section 3: Recommendations carousel -->
     <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px;margin-top:6px">Carousel performance</div>
     <div class="card" style="margin-bottom:10px">
@@ -1069,6 +1090,7 @@ body.show-engg .engg-note { display: block !important; }
       </div>
     </div>
 
+    </div><!-- /aa-tab-overview-2 -->
   </div>
 </div>
 
@@ -5127,6 +5149,20 @@ function aaBuildPrevLabel(prevStart, prevEnd) {
   return `${aaFmtShort(s)} – ${aaFmtShort(e)}`;
 }
 
+async function aaShowSubtab(t){
+  const ov=document.getElementById('aa-tab-overview');
+  const ov2=document.getElementById('aa-tab-overview-2');
+  const bs=document.getElementById('aa-tab-byscreen');
+  const isOv = t==='overview';
+  if(ov) ov.style.display = isOv?'block':'none';
+  if(ov2) ov2.style.display = isOv?'block':'none';
+  if(bs) bs.style.display = isOv?'none':'block';
+  const tabOv=document.getElementById('aa-subtab-overview');
+  const tabBs=document.getElementById('aa-subtab-byscreen');
+  if(tabOv) tabOv.classList.toggle('active', isOv);
+  if(tabBs) tabBs.classList.toggle('active', !isOv);
+}
+
 async function aaLoad(force = false) {
   if (!force && aaLoaded) return;
   aaLoaded = true;
@@ -8321,8 +8357,8 @@ async function aaRenderDeptBody(dept, rows, cfg) {
     chat: `<div style="background:var(--teal-l);border:1px solid var(--teal);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--teal-d)">Chat tracks: back/home nav, suggested prompt taps (with text + position), and message sends (with text).</div>`,
     taxi: `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Taxi has dedicated events (blue label): taxi_time_selected and taxi_vehicle_selected — richer than just booking_complete.</div>`,
     housekeeping: `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Laundry order total is always 0 (app bug). Housekeeping fires an <code>order</code> event with real value when request is placed.</div>`,
-    spa: showSpaClosure ? `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Casa Cook SPA closed Jun 1 – Oct 15. Data is pre-closure. BMS SPA (Chedi only) may show separately. Instrument before reopening.</div>` : '',
-    store: showStoreNote ? `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">Store is Chedi-only. store_item_added_to_cart fires with item name + price. "You may also like" on product detail is not yet tracked.</div><div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ <strong>Data quality warning:</strong> No internal-user filter exists yet. Numbers may include engineering/product testing. With only ~2 completed orders in 90 days, even 1 test order skews conversion by 50%. Enable "Exclude test data" once the environment dimension is active (~48h).</div>` : `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Store is only available at The Chedi. Data will be empty when viewing other hotels.</div>`,
+    spa: showSpaClosure ? `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Spa is one flow in two GA modules: <code>bms_spa</code> = browse/treatment-list, <code>spa</code> = checkout. Both fire at ALL hotels (verified in GA), not Chedi-only. Any Casa Cook spa closure should be confirmed with operations — GA still logs booking attempts during a closure, which can inflate the abandonment rate.</div>` : '',
+    store: showStoreNote ? `<div style="background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue-d)">store_item_added_to_cart fires with item name + price. "You may also like" on product detail is not yet tracked.</div><div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ <strong>Data quality warning:</strong> With only a handful of completed orders in 90 days, even 1 test order skews conversion heavily. Keep "Exclude test data" on.</div>` : `<div style="background:var(--amber-l);border:1px solid var(--amber);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠ Store volume varies by hotel. Store events were previously assumed Chedi-only, but GA shows activity across hotels — verify against operations.</div>`,
   };
 
   body.innerHTML = (NOTES[dept] || '') + richHTML + interactionsHTML;
