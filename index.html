@@ -839,7 +839,7 @@ body.show-engg .engg-note { display: block !important; }
     <!-- Booking funnel — dept breakdown only (topline metrics now in MoM trend) -->
     <div class="card" style="margin-bottom:16px">
       <div class="card-head">
-        <div><div class="card-title">Booking by department</div><div class="card-sub" id="aa-funnel-sub">Where booking starts come from · Start → Complete</div></div>
+        <div><div class="card-title">Where booking flows start</div><div class="card-sub" id="aa-funnel-sub">Share of booking starts by department · start volume, not conversion</div></div>
       </div>
       <div id="aa-funnel-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
     </div>
@@ -6114,7 +6114,9 @@ function aaFeatNotifications(md, mdPrev) {
       { val: c.rec, label: 'delivered', rate: null },
       { val: c.opn, label: 'opened', rate: engRate, rateOf: 'of delivered' },
     ],
-    note: lowVolume
+    note: c.rec === 0
+      ? `No <code>notification_receive</code> events in this slice — likely iOS-only (most iOS users are still on the old app) or the event fires only in foreground. Kept greyed here so a zero reads as a finding, not a missing feature.`
+      : lowVolume
       ? `Only ${c.rec.toLocaleString()} delivered across 11 hotels this period — around two per hotel per day. Check the sending system before reading the open rate: <code>notification_receive</code> may only fire in foreground.`
       : 'No event links an opened notification to what the guest did next. Add a deep-link parameter carried into the landing screen to measure outcome.',
     exposure:   { val: c.rec, label: 'delivered' },
@@ -6480,7 +6482,7 @@ function aaRenderFeatureScorecard(md, mdPrev) {
   let discovery = [], engagement = [], flows = [];
   try {
     discovery  = aaFeatEntryPoints(md, mdPrev);
-    engagement = [aaFeatCarousel(md, mdPrev), aaFeatNotifications(md, mdPrev)].filter(f => (f.base || 0) > 0);
+    engagement = [aaFeatCarousel(md, mdPrev), aaFeatNotifications(md, mdPrev)].filter(f => f.id === 'notifications' || (f.base || 0) > 0);
     flows      = aaFeatDepartments(md, mdPrev);
   } catch (e) {
     el.innerHTML = `<div style="font-size:11px;color:var(--red);padding:8px">Feature scorecard failed to build: ${e.message}</div>`;
@@ -6623,20 +6625,6 @@ function aaComputeSignals(curr, prev) {
       });
     }
   });
-
-  // Rule 4: app crash spike (±30%)
-  const cCrash = aaRows(curr.app_health || { rows: [] }).find(r => r.eventName === 'app_exception')?.eventCount || 0;
-  const pCrash = aaRows(prev.app_health || { rows: [] }).find(r => r.eventName === 'app_exception')?.eventCount || 0;
-  if (pCrash > 0) {
-    const pct = Math.round((cCrash - pCrash) / pCrash * 100);
-    if (Math.abs(pct) >= 30) {
-      signals.push({
-        severity: Math.abs(pct) >= 100 ? 3 : 2,
-        dir: pct < 0 ? 'good' : 'bad',
-        text: `App crashes ${pct > 0 ? 'up' : 'down'} ${Math.abs(pct)}% (${pCrash} → ${cCrash}) — ${pct > 0 ? 'investigate in Crashlytics' : 'stability improving'}`,
-      });
-    }
-  }
 
   // Rule 5: session vs intent divergence — sessions down but session→booking up
   const cMetricsRow = aaRows(curr.portfolio_metrics || { rows: [] })[0] || {};
@@ -7126,7 +7114,7 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData, healthD
           <td style="padding:6px 10px;text-align:right;font-size:11px;color:var(--text3)">—</td>
         </tr>` : '';
 
-      drilldownHTML = `<tr id="${hid}-detail" style="display:none"><td colspan="9" style="padding:0;background:color-mix(in srgb, var(--bg2) 60%, transparent)">
+      drilldownHTML = `<tr id="${hid}-detail" style="display:none"><td colspan="7" style="padding:0;background:color-mix(in srgb, var(--bg2) 60%, transparent)">
         <table style="width:100%;border-collapse:collapse">
           <thead><tr>
             <th style="text-align:left;padding:6px 10px 6px 28px;font-size:9px;letter-spacing:0.8px;text-transform:uppercase;color:var(--text3)">Dept</th>
@@ -7153,8 +7141,6 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData, healthD
       <td style="padding:10px;text-align:right;font-weight:600;color:${convColor}">${h.conv}%${convWarning}</td>
       <td style="padding:10px;text-align:right;color:${startRateColor}">${h.startRate}%</td>
       <td style="padding:10px;text-align:right;color:var(--red)">${h.abandoned.toLocaleString()}</td>
-      <td style="padding:10px;text-align:right;color:${crashColor}">${h.crashes.toLocaleString()}</td>
-      <td style="padding:10px;text-align:right;font-size:11px;color:${crashColor}">${h.crashRate}%</td>
     </tr>${drilldownHTML}`;
   }).join('');
 
@@ -7163,7 +7149,7 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData, healthD
 
   el.innerHTML = `
     <div style="font-size:11px;color:var(--text3);margin-bottom:8px">
-      Portfolio avg conversion: <strong>${avgConv}%</strong> · Avg intent: <strong>${avgStartRate}%</strong> · Avg crash rate: <strong>${avgCrashRate}%</strong> · Click headers to sort, rows to drill down.
+      Portfolio avg conversion: <strong>${avgConv}%</strong> · Avg intent: <strong>${avgStartRate}%</strong> · Click headers to sort, rows to drill down.
     </div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:12px">
@@ -7175,8 +7161,6 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData, healthD
           ${th('conv', 'Conv %')}
           ${th('startRate', 'Intent %')}
           ${th('abandoned', 'Lost')}
-          ${th('crashes', 'Crashes')}
-          ${th('crashRate', 'Crash %')}
         </tr></thead>
         <tbody>${rowsHTML}</tbody>
         <tfoot><tr style="border-top:2px solid var(--border);font-weight:600;font-size:11px;color:var(--text3)">
@@ -7187,8 +7171,6 @@ function aaRenderHotelComparison(funnelByHotelData, sessionsByHotelData, healthD
           <td style="padding:10px;text-align:right">${totConv}%</td>
           <td style="padding:10px;text-align:right">${avgStartRate}%</td>
           <td style="padding:10px;text-align:right">${totAbandoned.toLocaleString()}</td>
-          <td style="padding:10px;text-align:right">${totCrashes.toLocaleString()}</td>
-          <td style="padding:10px;text-align:right">${avgCrashRate}%</td>
         </tr></tfoot>
       </table>
     </div>
@@ -7257,6 +7239,8 @@ async function aaMomFetch() {
   let url = `${AA_FN}?multi=mom_sessions,mom_events&startDate=${momStart}&endDate=today`;
   if (aaHotelId) url += `&hotelId=${aaHotelId}`;
   if (aaExcludeTest) url += `&excludeTest=true`;
+  if (aaOs.length) url += `&os=${encodeURIComponent(aaOs.join(','))}`;
+  if (aaDeviceCategory.length) url += `&deviceCategory=${encodeURIComponent(aaDeviceCategory.join(','))}`;
 
   try {
     const res = await fetch(url);
@@ -7352,7 +7336,6 @@ function aaMomRender(sessionsData, eventsData) {
     { key: 'starts', name: 'Starts', color: '#0d9488', inv: false },
     { key: 'completed', name: 'Completed', color: '#10b981', inv: false },
     { key: 'abandoned', name: 'Abandoned', color: '#ef4444', inv: true },
-    { key: 'crashes', name: 'Crashes', color: '#f59e0b', inv: true, portfolioOnly: true },
   ];
   // Crashes can't be attributed per-hotel (app_exception lacks property). Flag when filtered.
   const crashesUnavailable = !!aaHotelId;
@@ -7519,17 +7502,7 @@ function aaRenderKPIs(funnelData, screensData, healthData) {
         <div>${aaSparkline(abandonedSpark, { color: 'var(--red)' })}</div>
       </div>
     </div>
-    <div class="kpi">
-      <div class="kpi-label">${tt('app_crashes', 'App crashes')}</div>
-      <div class="kpi-val">${crashes.toLocaleString()}</div>
-      <div class="kpi-delta" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-        <div>
-          <div style="color:${crashColor}">app_exception</div>
-          ${aaPrevData ? `<div style="margin-top:2px">${aaDeltaPill(crashes, prevCrashes, { isGoodWhenDown: true })}</div>` : ''}
-        </div>
-        <div>${aaSparkline(crashesSpark, { color: 'var(--red)' })}</div>
-      </div>
-    </div>`;
+`;
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -7809,20 +7782,24 @@ function aaRenderFunnel(data) {
 
   const deptStarts = {};
   rows.filter(r => r.eventName === 'booking_start').forEach(r => {
-    const dept = r['customEvent:source_module'] || '(not set)';
+    let dept = r['customEvent:source_module'] || '(not set)';
+    if (dept === 'bms_spa') dept = 'spa'; // browse + checkout are ONE Spa flow — never split them
     deptStarts[dept] = (deptStarts[dept] || 0) + r.eventCount;
   });
-  const topDepts = Object.entries(deptStarts).sort((a,b) => b[1]-a[1]).slice(0,6);
-  const DEPT_NAMES = { dining:'IRD', spa:'SPA', bms_spa:'SPA (BMS)', activity:'Activity', restaurant:'Restaurant', taxi:'Taxi', housekeeping:'Housekeeping', laundry:'Laundry', store:'Store' };
+  // Rank real departments by starts. The (not set) bucket is excluded from the
+  // bars (it has its own gap callout below). Store is always kept, even if it
+  // ranks low, because ops asked to see it explicitly.
+  const ranked = Object.entries(deptStarts).filter(([d]) => d !== '(not set)').sort((a,b) => b[1]-a[1]);
+  let topDepts = ranked.slice(0, 7);
+  if (deptStarts['store'] && !topDepts.some(([d]) => d === 'store')) topDepts.push(['store', deptStarts['store']]);
+  const DEPT_NAMES = { dining:'IRD', spa:'SPA', activity:'Activity', restaurant:'Restaurant', taxi:'Taxi', housekeeping:'Housekeeping', laundry:'Laundry', store:'Store' };
 
   document.getElementById('aa-funnel-body').innerHTML = `
     <div style="padding:0 20px 4px">
       <div style="font-size:11px;color:var(--text2);line-height:1.6;margin-bottom:16px">
-        ${convRate < 20 ? `⚠ <strong>${convRate}% conversion</strong> is below the 20% benchmark.` : `✓ <strong>${convRate}% conversion</strong> is above benchmark.`}
-        ${abandoned > completes ? ` More guests abandon (${abandoned.toLocaleString()}) than complete (${completes.toLocaleString()}).` : ''}
-        <span style="color:var(--text3)"> · ${starts.toLocaleString()} starts → ${completes.toLocaleString()} completed → ${abandoned.toLocaleString()} abandoned</span>
+        <strong>${starts.toLocaleString()} booking flows started</strong> in this period. Each bar is the department a flow started in — this shows where guest demand originates, not how well each department converts.
       </div>
-      <div class="sec-lbl" style="margin-bottom:10px">Booking starts by department</div>
+      <div class="sec-lbl" style="margin-bottom:10px">Starts by department</div>
       ${topDepts.map(([dept, count]) => {
         const isNotSet = dept === '(not set)';
         const label = isNotSet ? 'Unattributed' : (DEPT_NAMES[dept] || dept);
