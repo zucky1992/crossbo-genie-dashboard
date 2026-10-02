@@ -211,7 +211,14 @@ function buildReportBody(report, startDate, endDate) {
       dateRanges: dateRange,
       dimensions: clickDims,
       metrics: [{ name: 'eventCount' }],
-      dimensionFilter: clickFilter('home', null),
+      // v2: de-pollute Home. source_module=home is also stamped on clicks that
+      // happen on the chat / reel / requests / feedback screens (~43% of
+      // "home" clicks). The real Home screen is source_screen=index, so AND
+      // that in. source_screen confirmed registered in GA4 Admin.
+      dimensionFilter: { andGroup: { expressions: [
+        clickFilter('home', null),
+        { filter: { fieldName: 'customEvent:source_screen', stringFilter: { value: 'index' } } },
+      ] } },
       orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
       limit: 100,
     },

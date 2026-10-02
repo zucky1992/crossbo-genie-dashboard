@@ -5205,7 +5205,7 @@ async function aaLoad(force = false) {
     //     {current: {...}, previous: {...}}.
     // The prev range is 'NdaysAgo → today' shifted back by N days
     // (e.g. 30d current = day-60 to day-30 previous).
-    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,abandon_detail,top_services,recommendations,notifications,abandoned_cart,app_health,portfolio_metrics,sessions_by_hotel,dept_entry_source,booking_funnel_by_hotel,crashes_by_hotel,daily_sparkline,daily_events_sparkline';
+    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,abandon_detail,top_services,recommendations,notifications,abandoned_cart,abandoned_cart_by_dept,app_health,portfolio_metrics,sessions_by_hotel,dept_entry_source,booking_funnel_by_hotel,crashes_by_hotel,daily_sparkline,daily_events_sparkline';
     const prevRange = aaComputePrevRange(aaStartDate, aaEndDate);
     let multiUrl = `${AA_FN}?multi=${reportList}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
     if (prevRange) {
@@ -5238,6 +5238,7 @@ async function aaLoad(force = false) {
     const recs = md.recommendations || { rows: [] };
     const notifs = md.notifications || { rows: [] };
     const abandonedCart = md.abandoned_cart || { rows: [] };
+    const abandonedCartByDept = md.abandoned_cart_by_dept || { rows: [] };
     const health = md.app_health || { rows: [] };
     const portfolioMetrics = md.portfolio_metrics || { rows: [] };
     const sessionsByHotel = md.sessions_by_hotel || { rows: [] };
@@ -5289,7 +5290,7 @@ async function aaLoad(force = false) {
     aaRenderDeptPills(funnel, screens);
     aaRenderRecs(recs);
     aaRenderNotifications(notifs);
-    aaRenderAbandonedCart(abandonedCart);
+    aaRenderAbandonedCart(abandonedCart, abandonedCartByDept);
     // aaRenderAppHealth removed in v60 (App Health card gone). `health` still
     // fetched + cached above for the Hotel Comparison matrix.
 
@@ -8435,11 +8436,27 @@ function aaRenderRecs(data) {
         </div>`).join('')}` : '<div style="font-size:11px;color:var(--text3)">No recommendation data in this period.</div>'}`;
 }
 
-function aaRenderAbandonedCart(data) {
+function aaRenderAbandonedCart(data, byDept) {
   const el = document.getElementById('aa-abandon-body');
   if (!el) return;
   const rows = aaRows(data);
   const get = (ev) => rows.find(r => r.eventName === ev)?.eventCount || 0;
+  // Per-department leakage (impressions by module — customEvent:module, now registered).
+  const DEPT_NM = { dining:'IRD', spa:'Spa', activity:'Activity', store:'Store', housekeeping:'Housekeeping', restaurant:'Restaurant', taxi:'Taxi' };
+  const byMod = {};
+  aaRows(byDept || { rows: [] }).forEach(r => { if (r.eventName !== 'abandoned_cart_impression') return; const mod = r['customEvent:module'] || '(not set)'; byMod[mod] = (byMod[mod] || 0) + r.eventCount; });
+  const modRows = Object.entries(byMod).sort((a,b) => b[1]-a[1]);
+  const modTotal = modRows.reduce((a,[,v]) => a+v, 0);
+  const maxMod = modRows[0]?.[1] || 1;
+  const deptBars = modRows.length ? `
+    <div class="sec-lbl" style="margin:4px 0 10px">Where the leaked demand sits (abandoned-cart impressions by department)</div>
+    ${modRows.map(([mod,c]) => `
+      <div class="fu-bar-row">
+        <div class="fu-bar-label">${DEPT_NM[mod] || mod}</div>
+        <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(c/maxMod*100)}%;background:var(--amber)"></div></div>
+        <div class="fu-bar-val">${c.toLocaleString()}</div>
+        <div class="fu-bar-pct">${modTotal>0?Math.round(c/modTotal*100):0}%</div>
+      </div>`).join('')}` : '';
   const shown = get('abandoned_cart_impression');
   const tapped = get('abandoned_cart_tap');
   const recovered = get('abandoned_cart_recovered');
@@ -8458,9 +8475,10 @@ function aaRenderAbandonedCart(data) {
       <div class="aa-stat"><div class="aa-stat-label">Recovered</div><div class="aa-stat-val">${recovered.toLocaleString()}</div><div class="aa-stat-sub" style="color:${recovered>0?'var(--teal)':'var(--text3)'}">${recovShown}% of shown</div></div>
       <div class="aa-stat"><div class="aa-stat-label">Dismissed</div><div class="aa-stat-val">${dismissed.toLocaleString()}</div><div class="aa-stat-sub">${dismissRate}% X'd away</div></div>
     </div>
-    <div style="font-size:11px;color:var(--text2);line-height:1.6;padding:10px 12px;background:rgba(245,158,11,0.06);border-radius:6px">
+    ${deptBars}
+    <div style="font-size:11px;color:var(--text2);line-height:1.6;padding:10px 12px;background:rgba(245,158,11,0.06);border-radius:6px;margin-top:14px">
       <strong>Where it leaks:</strong> of ${shown.toLocaleString()} nudges, ~${ignoredRate}% are ignored — neither tapped nor dismissed. The recovery flow itself works: <strong>${recovTap}% of taps complete an order</strong>. The gap is at <strong>impression → tap (${tapRate}%)</strong> — a nudge visibility/design problem, not a broken recovery mechanism.
-      <div style="margin-top:6px;font-size:10px;color:var(--text3)">Aggregate only — a per-department split needs <code>customEvent:module</code> registered in GA4 (these events tag dept as <code>module</code>, not <code>source_module</code>).</div>
+      <div style="margin-top:6px;font-size:10px;color:var(--text3)">${modRows.length ? `Most of this sits in <strong>${DEPT_NM[modRows[0][0]]||modRows[0][0]}</strong> (${modTotal>0?Math.round(modRows[0][1]/modTotal*100):0}% of abandoned carts) — a department with no recommendation engine today.` : ''}</div>
     </div>`;
 }
 
