@@ -1100,6 +1100,16 @@ body.show-engg .engg-note { display: block !important; }
       </div>
     </div>
 
+    <!-- Section 5: Click flow (v65 — where taps lead, from click_navigation) -->
+    <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px;margin-top:6px">Navigation flow</div>
+    <div class="card" style="margin-bottom:10px;border-left:3px solid var(--blue)">
+      <div class="card-head">
+        <div><div class="card-title">Click flow — where taps lead</div><div class="card-sub">Per source screen: where navigating taps go, and how many stay in place</div></div>
+        <span class="fu-status fu-ok">● Live</span>
+      </div>
+      <div id="aa-flow-body" style="padding:4px 20px 16px"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
+    </div>
+
     </div><!-- /aa-tab-overview-2 -->
   </div>
 </div>
@@ -5205,7 +5215,7 @@ async function aaLoad(force = false) {
     //     {current: {...}, previous: {...}}.
     // The prev range is 'NdaysAgo → today' shifted back by N days
     // (e.g. 30d current = day-60 to day-30 previous).
-    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,abandon_detail,top_services,recommendations,notifications,abandoned_cart,abandoned_cart_by_dept,app_health,portfolio_metrics,sessions_by_hotel,dept_entry_source,booking_funnel_by_hotel,crashes_by_hotel,daily_sparkline,daily_events_sparkline';
+    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,abandon_detail,top_services,recommendations,notifications,abandoned_cart,abandoned_cart_by_dept,click_navigation,app_health,portfolio_metrics,sessions_by_hotel,dept_entry_source,booking_funnel_by_hotel,crashes_by_hotel,daily_sparkline,daily_events_sparkline';
     const prevRange = aaComputePrevRange(aaStartDate, aaEndDate);
     let multiUrl = `${AA_FN}?multi=${reportList}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
     if (prevRange) {
@@ -5239,6 +5249,7 @@ async function aaLoad(force = false) {
     const notifs = md.notifications || { rows: [] };
     const abandonedCart = md.abandoned_cart || { rows: [] };
     const abandonedCartByDept = md.abandoned_cart_by_dept || { rows: [] };
+    aaClickNavData = md.click_navigation || { rows: [] };
     const health = md.app_health || { rows: [] };
     const portfolioMetrics = md.portfolio_metrics || { rows: [] };
     const sessionsByHotel = md.sessions_by_hotel || { rows: [] };
@@ -5291,6 +5302,7 @@ async function aaLoad(force = false) {
     aaRenderRecs(recs);
     aaRenderNotifications(notifs);
     aaRenderAbandonedCart(abandonedCart, abandonedCartByDept);
+    aaRenderClickFlow();
     // aaRenderAppHealth removed in v60 (App Health card gone). `health` still
     // fetched + cached above for the Hotel Comparison matrix.
 
@@ -8480,6 +8492,51 @@ function aaRenderAbandonedCart(data, byDept) {
       <strong>Where it leaks:</strong> of ${shown.toLocaleString()} nudges, ~${ignoredRate}% are ignored — neither tapped nor dismissed. The recovery flow itself works: <strong>${recovTap}% of taps complete an order</strong>. The gap is at <strong>impression → tap (${tapRate}%)</strong> — a nudge visibility/design problem, not a broken recovery mechanism.
       <div style="margin-top:6px;font-size:10px;color:var(--text3)">${modRows.length ? `Most of this sits in <strong>${DEPT_NM[modRows[0][0]]||modRows[0][0]}</strong> (${modTotal>0?Math.round(modRows[0][1]/modTotal*100):0}% of abandoned carts) — a department with no recommendation engine today.` : ''}</div>
     </div>`;
+}
+
+let aaClickNavData = null;
+function aaRenderClickFlow(selKey) {
+  const el = document.getElementById('aa-flow-body');
+  if (!el) return;
+  const rows = aaRows(aaClickNavData || { rows: [] });
+  if (!rows.length) { el.innerHTML = '<div style="font-size:11px;color:var(--text3);padding:8px 0">No click-flow data in this period.</div>'; return; }
+  const sm = (r) => r['customEvent:source_module'] || '—';
+  const ss = (r) => r['customEvent:source_screen'] || '—';
+  const keyOf = (r) => `${sm(r)} · ${ss(r)}`;
+  // rank source screens by volume
+  const srcVol = {};
+  rows.forEach(r => { srcVol[keyOf(r)] = (srcVol[keyOf(r)] || 0) + r.eventCount; });
+  const sources = Object.entries(srcVol).sort((a,b) => b[1]-a[1]).map(([k]) => k).slice(0, 20);
+  const source = (selKey && srcVol[selKey]) ? selKey : sources[0];
+  // destinations for the selected source
+  let total = 0, inplace = 0; const destAgg = {};
+  rows.filter(r => keyOf(r) === source).forEach(r => {
+    const c = r.eventCount; total += c;
+    const d = r['customEvent:destination_module'];
+    if (!d || d === '(not set)') inplace += c; else destAgg[d] = (destAgg[d] || 0) + c;
+  });
+  const destRows = Object.entries(destAgg).sort((a,b) => b[1]-a[1]);
+  const maxDest = destRows[0]?.[1] || 1;
+  const navTotal = destRows.reduce((a,[,v]) => a+v, 0);
+  const opts = sources.map(s => `<option value="${s.replace(/"/g,'&quot;')}" ${s===source?'selected':''}>${s}</option>`).join('');
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+      <span style="font-size:11px;color:var(--text2)">Taps starting on</span>
+      <select onchange="aaRenderClickFlow(this.value)" style="font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-family:var(--sans)">${opts}</select>
+    </div>
+    <div style="font-size:11px;color:var(--text2);line-height:1.6;margin-bottom:14px">
+      <strong>${total.toLocaleString()}</strong> taps from <strong>${source}</strong> — <strong>${total>0?Math.round(inplace/total*100):0}%</strong> stay in place (in-screen actions, no destination recorded), <strong>${total>0?Math.round(navTotal/total*100):0}%</strong> navigate to another module.
+    </div>
+    ${destRows.length ? `
+      <div class="sec-lbl" style="margin-bottom:10px">Where navigating taps go</div>
+      ${destRows.map(([d,c]) => `
+        <div class="fu-bar-row">
+          <div class="fu-bar-label">${d}</div>
+          <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(c/maxDest*100)}%;background:var(--blue)"></div></div>
+          <div class="fu-bar-val">${c.toLocaleString()}</div>
+          <div class="fu-bar-pct">${navTotal>0?Math.round(c/navTotal*100):0}%</div>
+        </div>`).join('')}` : '<div style="font-size:11px;color:var(--text3)">All taps here are in-place actions — no navigation destinations recorded.</div>'}
+    <div style="margin-top:10px;font-size:10px;color:var(--text3)">Only navigation taps carry a destination (~42% of clicks); in-place actions don't, so "stay in place" includes genuine in-screen actions. <code>is_navigation</code> is unreliable (sent as a boolean), so direction is inferred from whether a destination was recorded.</div>`;
 }
 
 function aaRenderNotifications(data) {
