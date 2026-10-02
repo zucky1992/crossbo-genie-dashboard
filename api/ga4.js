@@ -377,6 +377,54 @@ function buildReportBody(report, startDate, endDate) {
       limit: 200,
     },
 
+    // ── Abandoned-cart funnel — impression → tap → recovered (+ dismissed)
+    // The app fires these four events but no report read them, so the
+    // dashboard could not see demand that was shown but never bought (the
+    // "interested but didn't buy" question). Event-name only: always
+    // queryable, no custom-dimension dependency.
+    // NOTE: a per-department split needs customEvent:module registered in GA4
+    // — these events tag the dept as `module`, NOT `source_module` like every
+    // other report — and `module` is unregistered today, so it is deliberately
+    // left out here to avoid a hard GA4 API error. Register it to unlock
+    // per-dept leakage.
+    abandoned_cart: {
+      dateRanges: dateRange,
+      dimensions: [{ name: 'eventName' }],
+      metrics: [{ name: 'eventCount' }],
+      dimensionFilter: {
+        orGroup: { expressions: [
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'abandoned_cart_impression' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'abandoned_cart_tap' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'abandoned_cart_recovered' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'abandoned_cart_dismissed' } } },
+        ]}
+      },
+      limit: 20,
+    },
+
+    // ── Recommendations totals — un-truncated impression vs add, per dept ──
+    // The `recommendations` report groups by item and is capped at limit:200,
+    // which truncates the impression denominator and therefore OVERSTATES the
+    // add-rate. This companion drops the item dimensions so the totals are
+    // exact, and keeps source_module (registered) for a real per-dept
+    // cross-sell rate. ~2 events × ~8 depts stays well under any cap.
+    recommendations_totals: {
+      dateRanges: dateRange,
+      dimensions: [
+        { name: 'eventName' },
+        { name: 'customEvent:source_module' },
+      ],
+      metrics: [{ name: 'eventCount' }],
+      dimensionFilter: {
+        orGroup: { expressions: [
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'recommendation_impression' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'recommendation_added_to_cart' } } },
+        ]}
+      },
+      orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
+      limit: 50,
+    },
+
     // ── Notifications funnel ──────────────────────────────────────────
     notifications: {
       dateRanges: dateRange,
