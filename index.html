@@ -8118,7 +8118,7 @@ async function aaRenderDeptBody(dept, rows, cfg) {
         <div class="sec-lbl" style="margin-bottom:8px">Where guests abandon · booking step</div>
         ${topSteps.map(([step, count]) => `
           <div class="fu-bar-row">
-            <div class="fu-bar-label" style="font-size:11px">${step}</div>
+            <div class="fu-bar-label" style="font-size:11px"${/^\(?unknown\)?$/i.test(step)?' title="booking_start fired but the guest left before reaching a named step — this is the single biggest drop-off, not a tracking hole. App fix: seed an initial step name at booking_start to split it into real stages."':''}>${/^\(?unknown\)?$/i.test(step) ? 'Entry · left before first step' : step}</div>
             <div class="fu-bar-track"><div class="fu-bar-fill" style="width:${Math.round(count/maxStep*100)}%;background:var(--amber)"></div></div>
             <div class="fu-bar-val">${count.toLocaleString()}</div>
             <div class="fu-bar-pct">${totalAbandons>0?Math.round(count/totalAbandons*100):0}%</div>
@@ -8329,16 +8329,19 @@ async function aaRenderDeptBody(dept, rows, cfg) {
 
   // Group rows by label (or eventName for dedicated events)
   const groups = {};
+  // v67: funnel events (booking_*, order) carry source_module but no label, so in
+  // the raw-source_module dept reports (spa/taxi/housekeeping/store) they polluted
+  // the interaction detail as "(not set)" taps. They are NOT taps — exclude them
+  // entirely now that these reports expose eventName. Click-only dept reports are
+  // unaffected (their rows are all click_event, so nothing is excluded).
+  const bookingEvents = ['booking_start', 'booking_complete', 'booking_abandoned', 'booking_view', 'booking_cancelled', 'order'];
   rows.forEach(r => {
     const evtName = eventKey ? r[eventKey] : '';
+    if (bookingEvents.includes(evtName)) return;
     const isSpecial = evtName && evtName !== 'click_event';
     const groupKey = isSpecial ? evtName : (r[labelKey] || evtName || '—');
     if (!groups[groupKey]) groups[groupKey] = { total: 0, isSpecial, evtName, items: [] };
     groups[groupKey].total += r.eventCount;
-
-    // For booking events, sub-row breakdown is meaningless (all (not set)) — skip it.
-    const bookingEvents = ['booking_start', 'booking_complete', 'booking_abandoned', 'booking_view', 'order'];
-    if (bookingEvents.includes(evtName)) return;
 
     // For recommendation events: rec_item_name is in label, UUID is in value.
     // Show the human-readable name instead of the UUID.

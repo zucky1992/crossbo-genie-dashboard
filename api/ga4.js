@@ -74,6 +74,7 @@ function clickFilter(module, screen) {
 function buildReportBody(report, startDate, endDate) {
   const dateRange = [{ startDate, endDate }];
   const clickDims = [
+    { name: 'eventName' },
     { name: 'customEvent:label' },
     { name: 'customEvent:value' },
     { name: 'customEvent:entry_point' },
@@ -265,7 +266,7 @@ function buildReportBody(report, startDate, endDate) {
         ]}
       },
       orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
-      limit: 100,
+      limit: 250, // v67: raised so high-count booking rows don't truncate real click types
     },
 
     // ── Restaurant ────────────────────────────────────────────────────
@@ -297,7 +298,7 @@ function buildReportBody(report, startDate, endDate) {
         ]}
       },
       orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
-      limit: 100,
+      limit: 250, // v67: raised so high-count booking rows don't truncate real click types
     },
 
     // ── Housekeeping ──────────────────────────────────────────────────
@@ -317,7 +318,7 @@ function buildReportBody(report, startDate, endDate) {
         ]}
       },
       orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
-      limit: 100,
+      limit: 250, // v67: raised so high-count booking rows don't truncate real click types
     },
 
     // ── Store ─────────────────────────────────────────────────────────
@@ -338,7 +339,7 @@ function buildReportBody(report, startDate, endDate) {
         ]}
       },
       orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
-      limit: 100,
+      limit: 250, // v67: raised so high-count booking rows don't truncate real click types
     },
 
     // ── Chat ──────────────────────────────────────────────────────────
