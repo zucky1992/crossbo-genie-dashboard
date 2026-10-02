@@ -1044,6 +1044,16 @@ body.show-engg .engg-note { display: block !important; }
       <div id="aa-rec-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
     </div>
 
+    <!-- Section 3b: Abandoned-cart recovery (added v63 — answers "interested but didn't buy") -->
+    <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px;margin-top:6px">Demand leakage</div>
+    <div class="card" style="margin-bottom:10px;border-left:3px solid var(--amber)">
+      <div class="card-head">
+        <div><div class="card-title">Abandoned-cart recovery</div><div class="card-sub">Guests who left items in a cart · nudge shown → tapped → recovered</div></div>
+        <span class="fu-status fu-ok" id="aa-abandon-status">● Live</span>
+      </div>
+      <div id="aa-abandon-body"><div class="fu-loading"><div class="fu-spinner"></div>Loading...</div></div>
+    </div>
+
     <!-- Section 4: Notifications -->
     <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px;margin-top:6px">Push notifications</div>
     <div class="card" style="margin-bottom:10px">
@@ -5195,7 +5205,7 @@ async function aaLoad(force = false) {
     //     {current: {...}, previous: {...}}.
     // The prev range is 'NdaysAgo → today' shifted back by N days
     // (e.g. 30d current = day-60 to day-30 previous).
-    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,abandon_detail,top_services,recommendations,notifications,app_health,portfolio_metrics,sessions_by_hotel,dept_entry_source,booking_funnel_by_hotel,crashes_by_hotel,daily_sparkline,daily_events_sparkline';
+    const reportList = 'booking_funnel,screen_views,abandon_by_step,booking_complete_detail,abandon_detail,top_services,recommendations,notifications,abandoned_cart,app_health,portfolio_metrics,sessions_by_hotel,dept_entry_source,booking_funnel_by_hotel,crashes_by_hotel,daily_sparkline,daily_events_sparkline';
     const prevRange = aaComputePrevRange(aaStartDate, aaEndDate);
     let multiUrl = `${AA_FN}?multi=${reportList}&startDate=${aaStartDate}&endDate=${aaEndDate}`;
     if (prevRange) {
@@ -5227,6 +5237,7 @@ async function aaLoad(force = false) {
     const services = md.top_services || { rows: [] };
     const recs = md.recommendations || { rows: [] };
     const notifs = md.notifications || { rows: [] };
+    const abandonedCart = md.abandoned_cart || { rows: [] };
     const health = md.app_health || { rows: [] };
     const portfolioMetrics = md.portfolio_metrics || { rows: [] };
     const sessionsByHotel = md.sessions_by_hotel || { rows: [] };
@@ -5278,6 +5289,7 @@ async function aaLoad(force = false) {
     aaRenderDeptPills(funnel, screens);
     aaRenderRecs(recs);
     aaRenderNotifications(notifs);
+    aaRenderAbandonedCart(abandonedCart);
     // aaRenderAppHealth removed in v60 (App Health card gone). `health` still
     // fetched + cached above for the Hotel Comparison matrix.
 
@@ -7826,21 +7838,35 @@ function aaRenderDeptPills(funnelData, screensData) {
   const rows = aaRows(funnelData);
   const DEPT_MODULE = { ird:'dining', activity:'activity', spa:'spa', restaurant:'restaurant', taxi:'taxi', housekeeping:'housekeeping', store:'store', chat:null, home:'home' };
 
-  // v48: Compute portfolio-average conversion across all attributed depts.
-  // Used as the benchmark line for each dept — depts are flagged relative to
-  // the portfolio, not against an arbitrary "25%" threshold. More honest and
-  // more adaptable as the portfolio itself changes.
-  //
-  // Note: excludes (not set) source_module from the denominator. Otherwise
-  // the ~50% unattributed events skew the average downward artificially.
-  let totalStarts = 0, totalCompletes = 0;
+  // v63: Two-camp benchmark. A single portfolio average mixed two things that
+  // aren't comparable: depts that emit a booking_view BEFORE booking_start
+  // (guest browses, then intent — restaurant/activity/taxi) have a real
+  // intent→order rate, while depts with no view fire booking_start on
+  // screen-open (IRD = menu open, Spa = step 2) so their "conversion" is an
+  // entry→order rate with a far larger denominator. Benchmarking IRD against
+  // restaurant flagged it red for a measurement artifact. We now classify each
+  // dept by whether it emits booking_view, compute a benchmark PER CAMP, and
+  // label the two differently so no one reads an entry rate as a true funnel.
+  // (Still excludes (not set) source_module from denominators.)
+  const hasView = {};
   rows.forEach(r => {
     const mod = r['customEvent:source_module'];
     if (!mod || mod === '(not set)') return;
-    if (r.eventName === 'booking_start') totalStarts += r.eventCount;
-    if (r.eventName === 'booking_complete') totalCompletes += r.eventCount;
+    if (r.eventName === 'booking_view' && r.eventCount > 0) hasView[mod] = true;
   });
-  const portfolioAvg = totalStarts > 0 ? Math.round(totalCompletes / totalStarts * 100) : 0;
+  const campOf = (mod) => hasView[mod] ? 'twostage' : 'entry';
+  const campSum = { twostage:{s:0,c:0}, entry:{s:0,c:0} };
+  rows.forEach(r => {
+    const mod = r['customEvent:source_module'];
+    if (!mod || mod === '(not set)') return;
+    const k = campOf(mod);
+    if (r.eventName === 'booking_start') campSum[k].s += r.eventCount;
+    if (r.eventName === 'booking_complete') campSum[k].c += r.eventCount;
+  });
+  const campAvg = {
+    twostage: campSum.twostage.s > 0 ? Math.round(campSum.twostage.c / campSum.twostage.s * 100) : 0,
+    entry: campSum.entry.s > 0 ? Math.round(campSum.entry.c / campSum.entry.s * 100) : 0,
+  };
 
   Object.keys(DEPT_CONFIG).forEach(dept => {
     const pillEl = document.getElementById(`aa-pill-${dept}`);
@@ -7851,13 +7877,20 @@ function aaRenderDeptPills(funnelData, screensData) {
     const deptCompletes = rows.filter(r => r.eventName === 'booking_complete' && r['customEvent:source_module'] === mod).reduce((a,r) => a + r.eventCount, 0);
     if (!deptStarts) { pillEl.innerHTML = '<span class="aa-health aa-health-na">Tap to load</span>'; return; }
     const conv = Math.round(deptCompletes / deptStarts * 100);
-    // Portfolio-relative color: within 5pt of avg = neutral, above = good, below = bad.
-    // This replaces the old absolute thresholds (25% / 15% cutoffs).
-    const diff = conv - portfolioAvg;
+    // Color within-camp: a dept is compared only to peers with the same start
+    // semantics, so IRD/Spa aren't flagged against intent-based depts.
+    const k = campOf(mod);
+    const benchmark = campAvg[k];
+    const diff = conv - benchmark;
     const cls = diff >= 5 ? 'aa-health-good' : diff <= -5 ? 'aa-health-bad' : 'aa-health-warn';
     const arrow = diff >= 3 ? '▲' : diff <= -3 ? '▼' : '';
-    const vsLabel = portfolioAvg > 0 ? ` <span style="font-size:9px;opacity:.7">vs ${portfolioAvg}% avg</span>` : '';
-    pillEl.innerHTML = `<span class="aa-health ${cls}">${arrow ? arrow + ' ' : ''}${conv}% conv${vsLabel}</span>`;
+    const metricLabel = k === 'entry' ? 'order' : 'conv';
+    const campLabel = k === 'entry' ? 'entry-anchored' : 'intent';
+    const tip = k === 'entry'
+      ? `Entry-anchored: booking_start fires on screen-open (e.g. IRD = menu open, Spa = step 2), so this is an entry→order rate, not a checkout funnel — not comparable to view-based depts. Benchmarked only against entry-anchored depts (${benchmark}%).`
+      : `Intent-anchored: this dept emits a view stage before start, so start→complete is a true intent→order rate. Benchmarked against two-stage depts (${benchmark}%).`;
+    const vsLabel = benchmark > 0 ? ` <span style="font-size:9px;opacity:.7">vs ${benchmark}% ${campLabel}</span>` : '';
+    pillEl.innerHTML = `<span class="aa-health ${cls}" title="${tip}">${arrow ? arrow + ' ' : ''}${conv}% ${metricLabel}${vsLabel}</span>`;
   });
 }
 
@@ -8400,6 +8433,35 @@ function aaRenderRecs(data) {
           <div class="fu-bar-val">${count.toLocaleString()}</div>
           <div class="fu-bar-pct">${totalTaps>0?Math.round(count/totalTaps*100):0}%</div>
         </div>`).join('')}` : '<div style="font-size:11px;color:var(--text3)">No recommendation data in this period.</div>'}`;
+}
+
+function aaRenderAbandonedCart(data) {
+  const el = document.getElementById('aa-abandon-body');
+  if (!el) return;
+  const rows = aaRows(data);
+  const get = (ev) => rows.find(r => r.eventName === ev)?.eventCount || 0;
+  const shown = get('abandoned_cart_impression');
+  const tapped = get('abandoned_cart_tap');
+  const recovered = get('abandoned_cart_recovered');
+  const dismissed = get('abandoned_cart_dismissed');
+  if (!shown) { el.innerHTML = '<div style="font-size:11px;color:var(--text3);padding:12px 0">No abandoned-cart events in this period.</div>'; return; }
+  const tapRate = (tapped/shown*100).toFixed(1);
+  const recovShown = (recovered/shown*100).toFixed(2);
+  const recovTap = tapped>0 ? (recovered/tapped*100).toFixed(0) : '—';
+  const dismissRate = (dismissed/shown*100).toFixed(1);
+  const ignored = Math.max(0, shown - tapped - dismissed);
+  const ignoredRate = Math.round(ignored/shown*100);
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px">
+      <div class="aa-stat"><div class="aa-stat-label">Nudges shown</div><div class="aa-stat-val">${shown.toLocaleString()}</div><div class="aa-stat-sub">cart-recovery prompts</div></div>
+      <div class="aa-stat"><div class="aa-stat-label">Tapped</div><div class="aa-stat-val">${tapped.toLocaleString()}</div><div class="aa-stat-sub" style="color:var(--amber)">${tapRate}% tap rate</div></div>
+      <div class="aa-stat"><div class="aa-stat-label">Recovered</div><div class="aa-stat-val">${recovered.toLocaleString()}</div><div class="aa-stat-sub" style="color:${recovered>0?'var(--teal)':'var(--text3)'}">${recovShown}% of shown</div></div>
+      <div class="aa-stat"><div class="aa-stat-label">Dismissed</div><div class="aa-stat-val">${dismissed.toLocaleString()}</div><div class="aa-stat-sub">${dismissRate}% X'd away</div></div>
+    </div>
+    <div style="font-size:11px;color:var(--text2);line-height:1.6;padding:10px 12px;background:rgba(245,158,11,0.06);border-radius:6px">
+      <strong>Where it leaks:</strong> of ${shown.toLocaleString()} nudges, ~${ignoredRate}% are ignored — neither tapped nor dismissed. The recovery flow itself works: <strong>${recovTap}% of taps complete an order</strong>. The gap is at <strong>impression → tap (${tapRate}%)</strong> — a nudge visibility/design problem, not a broken recovery mechanism.
+      <div style="margin-top:6px;font-size:10px;color:var(--text3)">Aggregate only — a per-department split needs <code>customEvent:module</code> registered in GA4 (these events tag dept as <code>module</code>, not <code>source_module</code>).</div>
+    </div>`;
 }
 
 function aaRenderNotifications(data) {
