@@ -721,7 +721,12 @@ module.exports = async (req, res) => {
     // Shared filter application
     function applyFilters(body) {
       if (hotelId) {
-        const hf = { filter: { fieldName: 'customEvent:hotel_id', stringFilter: { value: hotelId } } };
+        // v2: multiselect — hotelId may be a comma-separated list of UUIDs.
+        // One value → stringFilter; several → inListFilter (mirrors os/deviceCategory).
+        const ids = hotelId.split(',').map(s => s.trim()).filter(Boolean);
+        const hf = ids.length === 1
+          ? { filter: { fieldName: 'customEvent:hotel_id', stringFilter: { value: ids[0] } } }
+          : { filter: { fieldName: 'customEvent:hotel_id', inListFilter: { values: ids } } };
         body.dimensionFilter = body.dimensionFilter ? { andGroup: { expressions: [body.dimensionFilter, hf] } } : hf;
       }
       if (excludeTest === 'true') {
