@@ -425,6 +425,52 @@ function buildReportBody(report, startDate, endDate) {
       limit: 50,
     },
 
+    // ── Abandoned-cart BY DEPARTMENT — customEvent:module confirmed
+    // registered in GA4 Admin (Oct/Nov 2025). Same four events as
+    // `abandoned_cart`, split by the dept the cart was in, so we can see WHERE
+    // demand leaks. NOTE: custom dimensions are not retroactive — windows
+    // before registration show (not set); recent windows carry real values.
+    abandoned_cart_by_dept: {
+      dateRanges: dateRange,
+      dimensions: [
+        { name: 'eventName' },
+        { name: 'customEvent:module' },
+      ],
+      metrics: [{ name: 'eventCount' }],
+      dimensionFilter: {
+        orGroup: { expressions: [
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'abandoned_cart_impression' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'abandoned_cart_tap' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'abandoned_cart_recovered' } } },
+          { filter: { fieldName: 'eventName', stringFilter: { value: 'abandoned_cart_dismissed' } } },
+        ]}
+      },
+      orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
+      limit: 50,
+    },
+
+    // ── Click navigation / drop-off — the button-level flow the dashboard
+    // never had. source_module / source_screen / destination_module /
+    // is_navigation all confirmed registered. From each screen: which
+    // destinations taps lead to, and how many are navigation vs in-place
+    // actions. Foundation for click→outcome drop-off and for stripping the
+    // chat-tagged-as-home pollution (filter source_screen on the Home view).
+    click_navigation: {
+      dateRanges: dateRange,
+      dimensions: [
+        { name: 'customEvent:source_module' },
+        { name: 'customEvent:source_screen' },
+        { name: 'customEvent:destination_module' },
+        { name: 'customEvent:is_navigation' },
+      ],
+      metrics: [{ name: 'eventCount' }],
+      dimensionFilter: {
+        filter: { fieldName: 'eventName', stringFilter: { value: 'click_event' } }
+      },
+      orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
+      limit: 250,
+    },
+
     // ── Notifications funnel ──────────────────────────────────────────
     notifications: {
       dateRanges: dateRange,
