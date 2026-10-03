@@ -634,6 +634,14 @@ body.show-engg .engg-note { display: block !important; }
         <div style="position:relative;width:100%;height:220px"><canvas id="adp-scatter-chart"></canvas></div>
       </div>
     </div>
+    <div class="g2" style="margin-bottom:16px">
+      <div class="card"><div class="card-head"><div><div class="card-title">Login % vs length of stay · hotel scatter</div><div class="card-sub">Is low login just short stays? x = avg nights · y = login %</div></div></div>
+        <div style="position:relative;width:100%;height:220px"><canvas id="adp-los-chart"></canvas></div>
+      </div>
+      <div class="card"><div class="card-head"><div><div class="card-title">Read</div><div class="card-sub">What the scatter says</div></div></div>
+        <div style="font-size:12px;color:var(--text2);line-height:1.5;padding:4px 2px">If longer stays drove login, the points would trend up to the right — they don't. Ancient Sands (7+ nights) logs in ~64%, but Sultan Bey (~6 nights) ~14%. Length explains little; onboarding at check-in is the lever.</div>
+      </div>
+    </div>
     <div class="g2">
       <div class="card"><div class="card-head"><div><div class="card-title">Login rate by hotel</div><div class="card-sub">Green ≥50% · Amber 25–49% · Red &lt;25%</div></div></div>
         <div id="adp-login-bars"></div>
@@ -1838,6 +1846,9 @@ function slimStays(r) {
     total_guests: r.total_guests||1,
     dining_onboarding_status: r.dining_onboarding_status||'',
     ambassador: r.ambassador||'',
+    // v68: retain reservation/stay status so not-yet-arrived "booked" rows can be
+    // excluded from check-ins. Raw column name varies by export; read the likely ones.
+    reservation_status: String(r.status||r.reservation_status||r.booking_status||r.stay_status||'').trim(),
   };
 }
 
@@ -1983,6 +1994,11 @@ function validTask(r) {
    applies to all non-Andermatt hotels; Andermatt keeps everything. Combined
    with validTask this is the single task-eligibility gate used everywhere. */
 const EXCLUDED_DEPTS = new Set(['CONCIERGE', 'GUEST_EXPERIENCE', 'VALET']);
+/* v68: stay rows whose status means the guest has NOT actually arrived are not
+   check-ins and must leave the login-rate denominator (and numerator). Adjust the
+   values to match the raw stay export; unknown/blank status is treated as a real
+   check-in, so this is a safe no-op until the export carries a status column. */
+const BOOKED_STATUSES = new Set(['BOOKED','RESERVED','RESERVATION','NO_SHOW','NOSHOW','CANCELLED','CANCELED']);
 function taskDeptAllowed(r) {
   const rt = String(r.requestType||'').toUpperCase().replace(/ /g,'_');
   if (!EXCLUDED_DEPTS.has(rt)) return true;
@@ -2034,6 +2050,7 @@ async function computeSummary(monthKey) {
     const stH = stRows.filter(r =>
       (r.hotel_id === hid) &&
       !BAD_ROOMS.has(r.room_number) &&
+      !BOOKED_STATUSES.has(String(r.reservation_status||'').toUpperCase()) &&
       checkInMonth(r, monthKey)
     );
     // Count unique guest IDs — one guest can have multiple rows (room changes etc.)
@@ -3144,6 +3161,26 @@ async function rAdoption() {
     scales:{
       x:{title:{display:true,text:'Login rate %',font:{size:9}},min:0,max:100,ticks:{font:{size:9}},grid:{color:'rgba(128,128,128,0.1)'}},
       y:{title:{display:true,text:'Order rate %',font:{size:9}},min:0,ticks:{font:{size:9}},grid:{color:'rgba(128,128,128,0.1)'}}
+    }}});
+
+  // ── Login % vs Length-of-stay scatter (v68) ──
+  const losHotels = hData.filter(h => h.avgLOS != null);
+  mkC('adp-los-chart',{type:'scatter',data:{
+    datasets:losHotels.map(h=>({
+      label:h.n.split(' ')[0],
+      data:[{x:h.avgLOS,y:h.loginPct}],
+      backgroundColor:h.col+'CC',
+      borderColor:h.col,
+      borderWidth:1,
+      pointRadius:7,
+      pointHoverRadius:9,
+      datalabels:{display:true,color:h.col,font:{size:8,weight:'500'},anchor:'end',align:'right',offset:4,formatter:()=>h.n.split(' ')[0]}
+    }))
+  },options:{responsive:true,maintainAspectRatio:false,layout:{padding:{right:50}},
+    plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${ctx.parsed.x} nights · Login ${ctx.parsed.y}%`}},datalabels:{}},
+    scales:{
+      x:{title:{display:true,text:'Avg length of stay (nights)',font:{size:9}},min:0,ticks:{font:{size:9}},grid:{color:'rgba(128,128,128,0.1)'}},
+      y:{title:{display:true,text:'Login rate %',font:{size:9}},min:0,max:100,ticks:{font:{size:9}},grid:{color:'rgba(128,128,128,0.1)'}}
     }}});
 
   // Login bars
